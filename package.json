@@ -49,6 +49,7 @@
     "@txnlab/use-wallet": "^4.0.1",
     "@txnlab/use-wallet-react": "^4.0.1",
     "algosdk": "^3.2.0",
+    "buffer": "^6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
