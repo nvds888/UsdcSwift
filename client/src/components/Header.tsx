@@ -11,22 +11,16 @@ import {
 import { Send, Wallet, LogOut } from "lucide-react";
 
 const Header: React.FC = () => {
-  const { activeAccount, providers, disconnect } = useWallet();
+  const { activeAccount, activeWallet, wallets } = useWallet();
   
   const truncateAddress = (address: string) => {
     if (!address) return "";
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
   
-  const handleDisconnect = () => {
-    if (activeAccount && providers) {
-      const activeProvider = Object.values(providers).find(
-        (provider) => provider.isActive
-      );
-      
-      if (activeProvider) {
-        disconnect(activeProvider);
-      }
+  const handleDisconnect = async () => {
+    if (activeWallet) {
+      await activeWallet.disconnect();
     }
   };
 

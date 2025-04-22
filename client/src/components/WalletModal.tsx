@@ -16,7 +16,7 @@ interface WalletModalProps {
 }
 
 const WalletModal: React.FC<WalletModalProps> = ({ isOpen, setIsOpen }) => {
-  const { providers, activeAccount } = useWallet();
+  const { wallets, activeAccount } = useWallet();
 
   // Close modal if already connected
   React.useEffect(() => {
@@ -25,10 +25,10 @@ const WalletModal: React.FC<WalletModalProps> = ({ isOpen, setIsOpen }) => {
     }
   }, [activeAccount, setIsOpen]);
 
-  const handleConnect = async (providerName: string) => {
-    const selectedProvider = providers?.[providerName];
-    if (selectedProvider && !selectedProvider.isConnected) {
-      await selectedProvider.connect();
+  const handleConnect = async (walletId: string) => {
+    const selectedWallet = wallets.find(wallet => wallet.id === walletId);
+    if (selectedWallet && !selectedWallet.isConnected) {
+      await selectedWallet.connect();
       setIsOpen(false);
     }
   };

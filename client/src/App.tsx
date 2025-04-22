@@ -5,7 +5,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "next-themes";
 import { WalletProvider, WalletManager } from "@txnlab/use-wallet-react";
-import { DeflyWallet, PeraWallet } from "@txnlab/use-wallet";
 import NotFound from "@/pages/not-found";
 import SendFlow from "@/pages/SendFlow";
 import ClaimPage from "@/pages/ClaimPage";
@@ -16,8 +15,8 @@ import Footer from "@/components/Footer";
 // Create a wallet manager instance with Pera and Defly wallets
 const walletManager = new WalletManager({
   wallets: [
-    { id: 'pera', options: {}, metadata: { name: 'Pera Wallet' } }, 
-    { id: 'defly', options: {}, metadata: { name: 'Defly Wallet' } }
+    { id: 'pera' as any, options: {}, metadata: { name: 'Pera Wallet' } }, 
+    { id: 'defly' as any, options: {}, metadata: { name: 'Defly Wallet' } }
   ]
 });
 
