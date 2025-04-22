@@ -84,13 +84,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         claimToken: claimToken,
       });
       
-      // In a real application, fund the escrow account here
-      // This would require a signed transaction from the frontend
-      // const txId = await fundEscrowAccount(
-      //   validatedData.senderAddress,
-      //   escrowAddress,
-      //   parseFloat(validatedData.amount)
-      // );
+      // Generate transaction parameters for the frontend to sign
+      // The frontend will handle the actual transaction signing and submission
+      const txParams = {
+        senderAddress: validatedData.senderAddress,
+        escrowAddress: escrowAddress,
+        amount: parseFloat(validatedData.amount)
+      };
       
       // Send email to recipient
       const emailSent = await sendClaimEmail({
@@ -134,17 +134,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Funds have already been claimed" });
       }
       
-      // In a real application, claim funds from escrow here
-      // This would require re-creating the escrow logic signature
-      // const txId = await claimFromEscrow(
-      //   transaction.smartContractAddress,
-      //   logicSignature, // would need to re-create this
-      //   validatedData.recipientAddress,
-      //   validatedData.claimToken,
-      //   parseFloat(transaction.amount)
-      // );
+      // Generate transaction parameters for the frontend to sign
+      // In a production app, we would recreate the escrow logic signature here
+      // and return the transaction parameters for the frontend to sign
+      const txParams = {
+        escrowAddress: transaction.smartContractAddress,
+        recipientAddress: validatedData.recipientAddress,
+        claimToken: validatedData.claimToken,
+        amount: parseFloat(transaction.amount)
+      };
       
-      // For demo, generate a fake transaction ID
+      // For now, generate a fake transaction ID
       const txId = `TXID-${uuidv4()}`;
       
       // Update transaction as claimed
@@ -260,16 +260,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Funds have already been claimed" });
       }
       
-      // In a real application, reclaim funds from escrow here
-      // This would require re-creating the escrow logic signature
-      // const txId = await reclaimFromEscrow(
-      //   transaction.smartContractAddress,
-      //   logicSignature, // would need to re-create this
-      //   validatedData.senderAddress,
-      //   parseFloat(transaction.amount)
-      // );
+      // Generate transaction parameters for the frontend to sign
+      // In a production app, we would recreate the escrow logic signature here
+      // and return the transaction parameters for the frontend to sign
+      const txParams = {
+        escrowAddress: transaction.smartContractAddress,
+        senderAddress: validatedData.senderAddress,
+        amount: parseFloat(transaction.amount)
+      };
       
-      // For demo, generate a fake transaction ID
+      // For now, generate a fake transaction ID
       const txId = `RECLAIM-${uuidv4()}`;
       
       // Update transaction as claimed by sender (reclaimed)
