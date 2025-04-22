@@ -23,7 +23,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const getAppDomain = (req: Request): string => {
     const domains = process.env.REPLIT_DOMAINS 
       ? process.env.REPLIT_DOMAINS.split(",")[0] 
-      : null;
+      : "";
       
     return domains 
       ? `https://${domains}` 
@@ -105,6 +105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(201).json({
         ...transaction,
         emailSent,
+        txParams
       });
     } catch (error) {
       console.error("Error creating transaction:", error);
@@ -154,7 +155,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         txId
       );
       
-      return res.json(updatedTransaction);
+      return res.json({
+        ...updatedTransaction,
+        txParams
+      });
     } catch (error) {
       console.error("Error claiming transaction:", error);
       if (error instanceof z.ZodError) {
@@ -216,7 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const emailSent = await sendClaimEmail({
         recipientEmail: transaction.recipientEmail,
         amount: transaction.amount,
-        note: transaction.note,
+        note: transaction.note || undefined,
         senderAddress: transaction.senderAddress,
         claimToken: updatedTransaction!.claimToken,
         appDomain: getAppDomain(req),
@@ -279,7 +283,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         txId
       );
       
-      return res.json(updatedTransaction);
+      return res.json({
+        ...updatedTransaction,
+        txParams
+      });
     } catch (error) {
       console.error("Error reclaiming transaction:", error);
       if (error instanceof z.ZodError) {

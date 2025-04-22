@@ -167,8 +167,27 @@ export function useAlgorand() {
   const reclaimUsdc = async (params: ReclaimUsdcParams): Promise<Transaction | null> => {
     setIsLoading(true);
     try {
+      // First, get the transaction parameters from the server
       const res = await apiRequest("POST", "/api/reclaim", params);
       const data = await res.json();
+      
+      // In a production app, this would handle the actual transaction signing
+      // using the connected wallet
+      if (activeAccount && data.txParams) {
+        // This would be where we'd sign and submit the transaction
+        // For example:
+        // const algodClient = new algosdk.Algodv2(token, server, port);
+        // const suggestedParams = await algodClient.getTransactionParams().do();
+        // const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        //   from: data.txParams.escrowAddress,
+        //   to: activeAccount.address,
+        //   amount: Math.floor(data.txParams.amount * 1_000_000), // Convert to microUSDC
+        //   assetIndex: USDC_ASSET_ID,
+        //   suggestedParams
+        // });
+        // const signedTxn = await window.algorand.signTransaction(txn.toByte());
+        // await algodClient.sendRawTransaction(signedTxn).do();
+      }
       
       // Invalidate transactions cache
       queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });

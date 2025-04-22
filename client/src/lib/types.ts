@@ -36,8 +36,17 @@ export interface ReclaimUsdcParams {
   senderAddress: string;
 }
 
+export interface TransactionParams {
+  senderAddress?: string;
+  escrowAddress: string;
+  recipientAddress?: string;
+  amount: number;
+  claimToken?: string;
+}
+
 export interface TransactionResponse extends Transaction {
   emailSent: boolean;
+  txParams?: TransactionParams;
 }
 
 export interface WalletAccount {
