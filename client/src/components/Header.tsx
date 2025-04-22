@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Send } from "lucide-react";
 import ConnectWallet from "@/components/ConnectWallet";
 
+const Header: React.FC = () => {
   return (
     <header className="bg-white shadow-sm">
       <div className="container mx-auto px-4 py-4 flex justify-between items-center">
@@ -16,41 +17,7 @@ import ConnectWallet from "@/components/ConnectWallet";
         </Link>
         
         <div className="flex items-center space-x-4">
-          {activeAccount ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="flex items-center space-x-2">
-                  <div className="h-2 w-2 rounded-full bg-[#00AC6B]" />
-                  <span className="text-sm hidden md:inline">{truncateAddress(activeAccount.address)}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link href="/transactions">
-                    <div className="flex items-center cursor-pointer w-full">
-                      <Send className="mr-2 h-4 w-4" />
-                      <span>My Transactions</span>
-                    </div>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleDisconnect}>
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Disconnect</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <Button 
-              variant="outline" 
-              className="hidden md:flex items-center"
-              asChild
-            >
-              <Link href="/connect">
-                <Wallet className="mr-2 h-4 w-4" />
-                <span>Connect Wallet</span>
-              </Link>
-            </Button>
-          )}
+          <ConnectWallet />
         </div>
       </div>
     </header>

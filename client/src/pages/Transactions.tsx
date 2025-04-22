@@ -327,7 +327,11 @@ const Transactions: React.FC = () => {
       </AlertDialog>
       
       {/* Wallet Modal */}
-      <WalletModal isOpen={isWalletModalOpen} setIsOpen={setIsWalletModalOpen} />
+      <WalletModal 
+        isOpen={isWalletModalOpen} 
+        onClose={() => setIsWalletModalOpen(false)} 
+        wallets={useWallet().wallets}
+      />
     </main>
   );
 };
