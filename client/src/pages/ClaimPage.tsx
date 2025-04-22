@@ -24,7 +24,7 @@ const ClaimPage: React.FC = () => {
   const claimToken = params?.token || "";
   
   // Fetch claim details
-  const { data: transaction, isLoading: isLoadingClaim, error } = useQuery({
+  const { data: transaction, isLoading: isLoadingClaim, error } = useQuery<Transaction>({
     queryKey: [`/api/claim/${claimToken}`],
     enabled: !!claimToken,
   });
