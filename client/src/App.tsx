@@ -15,8 +15,8 @@ import Footer from "@/components/Footer";
 // Create a wallet manager instance with Pera and Defly wallets
 const walletManager = new WalletManager({
   wallets: [
-    { id: 'pera' as any, options: {}, metadata: { name: 'Pera Wallet' } }, 
-    { id: 'defly' as any, options: {}, metadata: { name: 'Defly Wallet' } }
+    { id: 'pera', options: {}, metadata: { name: 'Pera Wallet', icon: 'P' } }, 
+    { id: 'defly', options: {}, metadata: { name: 'Defly Wallet', icon: 'D' } }
   ]
 });
 

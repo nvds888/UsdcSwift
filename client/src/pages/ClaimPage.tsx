@@ -294,7 +294,11 @@ const ClaimPage: React.FC = () => {
       </div>
       
       {/* Wallet Modal */}
-      <WalletModal isOpen={isWalletModalOpen} setIsOpen={setIsWalletModalOpen} />
+      <WalletModal 
+        isOpen={isWalletModalOpen} 
+        onClose={() => setIsWalletModalOpen(false)} 
+        wallets={useWallet().wallets}
+      />
     </main>
   );
 };
