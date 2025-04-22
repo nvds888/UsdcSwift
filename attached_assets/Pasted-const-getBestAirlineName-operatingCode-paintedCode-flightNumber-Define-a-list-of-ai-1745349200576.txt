@@ -1,0 +1,50 @@
+const getBestAirlineName = (operatingCode, paintedCode, flightNumber) => {
+  // Define a list of airlines where we should validate using flight number
+  const validateWithFlightNumber = ['BAW', 'BA']; // British Airways ICAO and IATA codes
+  
+  // Extract airline code from flight number (usually first 2 characters)
+  let flightPrefix = null;
+  if (flightNumber && typeof flightNumber === 'string' && flightNumber.length >= 2) {
+    // Look for either a 2-letter or 3-letter prefix (assuming letters only)
+    const prefixMatch = flightNumber.match(/^([A-Z]{2,3})\d+/i);
+    if (prefixMatch) {
+      flightPrefix = prefixMatch[1].toUpperCase();
+    }
+  }
+  
+  // Get names from codes (if they exist in our database)
+  const operatingName = getAirlineName(operatingCode);
+  const paintedName = getAirlineName(paintedCode);
+  const flightPrefixName = flightPrefix ? getAirlineName(flightPrefix) : null;
+  
+  // Determine if codes are valid (if they return an actual airline name, not just the code back)
+  const operatingIsValid = operatingName !== operatingCode;
+  const paintedIsValid = paintedName !== paintedCode;
+  const flightPrefixIsValid = flightPrefixName !== flightPrefix && flightPrefixName !== 'Unknown';
+  
+  // Check if this is a British Airways flight (or any other airline we want to validate)
+  const shouldValidateWithFlightNumber = 
+    (flightPrefix && validateWithFlightNumber.includes(flightPrefix)) ||
+    (operatingCode && validateWithFlightNumber.includes(operatingCode)) ||
+    (paintedCode && validateWithFlightNumber.includes(paintedCode));
+  
+  // For most airlines, just use the standard approach without flight number validation
+  if (!shouldValidateWithFlightNumber) {
+    if (paintedIsValid) return paintedName;
+    if (operatingIsValid) return operatingName;
+    return paintedCode || operatingCode || 'Unknown';
+  }
+  
+  // Only for British Airways (or other specified airlines), use flight number validation
+  if (flightPrefixIsValid && flightPrefix === 'BA') {
+    return flightPrefixName; // Trust BA flight numbers
+  }
+  
+  // Even for British Airways, if flight number doesn't help, fall back to standard logic
+  if (paintedIsValid) return paintedName;
+  if (operatingIsValid) return operatingName;
+  if (flightPrefixIsValid) return flightPrefixName;
+  
+  // Ultimate fallback
+  return paintedCode || operatingCode || flightPrefix || 'Unknown';
+};

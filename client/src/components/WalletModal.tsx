@@ -1,5 +1,5 @@
 import React from "react";
-import { useWallet } from "@txnlab/use-wallet-react";
+import { type Wallet } from "@txnlab/use-wallet-react";
 import {
   Dialog,
   DialogContent,
@@ -8,33 +8,27 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { X, ExternalLink, Info } from "lucide-react";
+import { ExternalLink, Info } from "lucide-react";
 
 interface WalletModalProps {
   isOpen: boolean;
-  setIsOpen: (isOpen: boolean) => void;
+  onClose: () => void;
+  wallets: Wallet[];
 }
 
-const WalletModal: React.FC<WalletModalProps> = ({ isOpen, setIsOpen }) => {
-  const { wallets, activeAccount } = useWallet();
-
-  // Close modal if already connected
-  React.useEffect(() => {
-    if (activeAccount) {
-      setIsOpen(false);
-    }
-  }, [activeAccount, setIsOpen]);
-
-  const handleConnect = async (walletId: string) => {
-    const selectedWallet = wallets.find(wallet => wallet.id === walletId);
-    if (selectedWallet && !selectedWallet.isConnected) {
-      await selectedWallet.connect();
-      setIsOpen(false);
+const WalletModal: React.FC<WalletModalProps> = ({ isOpen, onClose, wallets }) => {
+  // Handle wallet connection
+  const handleConnect = async (wallet: Wallet) => {
+    try {
+      await wallet.connect();
+      onClose();
+    } catch (error) {
+      console.error("Error connecting wallet:", error);
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold">Connect Your Wallet</DialogTitle>
@@ -44,35 +38,29 @@ const WalletModal: React.FC<WalletModalProps> = ({ isOpen, setIsOpen }) => {
         </DialogHeader>
         
         <div className="space-y-3 my-6">
-          {/* Pera Wallet */}
-          <Button
-            variant="outline"
-            className="w-full justify-between p-6 hover:bg-gray-50"
-            onClick={() => handleConnect("pera")}
-          >
-            <div className="flex items-center">
-              <div className="w-8 h-8 mr-3 rounded-full bg-blue-100 flex items-center justify-center">
-                <span className="font-semibold text-blue-600">P</span>
+          {wallets.map((wallet) => (
+            <Button
+              key={wallet.id}
+              variant="outline"
+              className="w-full justify-between p-6 hover:bg-gray-50"
+              onClick={() => handleConnect(wallet)}
+              disabled={wallet.isConnected}
+            >
+              <div className="flex items-center">
+                <div className="w-8 h-8 mr-3 rounded-full bg-blue-100 flex items-center justify-center">
+                  <span className="font-semibold text-blue-600">{wallet.metadata.name.charAt(0)}</span>
+                </div>
+                <span className="font-medium">{wallet.metadata.name}</span>
               </div>
-              <span className="font-medium">Pera Wallet</span>
-            </div>
-            <span className="text-gray-400">→</span>
-          </Button>
+              <span className="text-gray-400">→</span>
+            </Button>
+          ))}
           
-          {/* Defly Wallet */}
-          <Button
-            variant="outline"
-            className="w-full justify-between p-6 hover:bg-gray-50"
-            onClick={() => handleConnect("defly")}
-          >
-            <div className="flex items-center">
-              <div className="w-8 h-8 mr-3 rounded-full bg-purple-100 flex items-center justify-center">
-                <span className="font-semibold text-purple-600">D</span>
-              </div>
-              <span className="font-medium">Defly Wallet</span>
+          {wallets.length === 0 && (
+            <div className="text-center py-4 text-gray-500">
+              No wallets available
             </div>
-            <span className="text-gray-400">→</span>
-          </Button>
+          )}
         </div>
         
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

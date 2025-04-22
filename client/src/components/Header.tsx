@@ -1,28 +1,7 @@
 import React from "react";
 import { Link } from "wouter";
-import { Button } from "@/components/ui/button";
-import { useWallet } from "@txnlab/use-wallet-react";
-import { 
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
-import { Send, Wallet, LogOut } from "lucide-react";
-
-const Header: React.FC = () => {
-  const { activeAccount, activeWallet, wallets } = useWallet();
-  
-  const truncateAddress = (address: string) => {
-    if (!address) return "";
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
-  };
-  
-  const handleDisconnect = async () => {
-    if (activeWallet) {
-      await activeWallet.disconnect();
-    }
-  };
+import { Send } from "lucide-react";
+import ConnectWallet from "@/components/ConnectWallet";
 
   return (
     <header className="bg-white shadow-sm">
