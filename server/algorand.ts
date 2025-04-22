@@ -1,0 +1,230 @@
+import algosdk from "algosdk";
+import { v4 as uuidv4 } from "uuid";
+
+// These would come from environment variables in a real application
+const ALGOD_SERVER = process.env.ALGOD_SERVER || "https://testnet-api.algonode.cloud";
+const ALGOD_PORT = process.env.ALGOD_PORT || "";
+const ALGOD_TOKEN = process.env.ALGOD_TOKEN || "";
+const USDC_ASSET_ID = parseInt(process.env.USDC_ASSET_ID || "10458941"); // Testnet USDC-like asset ID
+
+// Initialize Algorand client
+const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
+
+export async function compileTealProgram(tealSource: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const programBytes = encoder.encode(tealSource);
+  const compileResponse = await algodClient.compile(programBytes).do();
+  return new Uint8Array(Buffer.from(compileResponse.result, "base64"));
+}
+
+export function createEscrowTEAL(sender: string, receiver: string, hash: string): string {
+  // TEAL program for escrow account
+  // This is a simplified version - in production, you'd want more robust checks
+  return `#pragma version 5
+  
+  // Check if transaction is a payment or asset transfer
+  txn TypeEnum
+  int 4 // AssetTransfer
+  ==
+  
+  // Verify the asset ID is USDC
+  txn XferAsset
+  int ${USDC_ASSET_ID}
+  ==
+  &&
+  
+  // Transaction must either come from sender (reclaim) or receiver (claim)
+  txn Sender
+  addr ${sender}
+  ==
+  txn Sender
+  addr ${receiver}
+  ==
+  ||
+  
+  // If receiver is claiming, they must provide the correct hash
+  txn Sender
+  addr ${receiver}
+  ==
+  bnz claim_path
+  
+  // If sender is reclaiming, continue to approval
+  b approve
+  
+  claim_path:
+  txn Note
+  arg 0
+  ==
+  bnz approve
+  err
+  
+  approve:
+  int 1
+  return`;
+}
+
+export async function createEscrowAccount(sender: string): Promise<{
+  escrowAddress: string;
+  claimToken: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  // Generate a unique claim token
+  const claimToken = uuidv4();
+  
+  // Hash the claim token (for security)
+  const hash = algosdk.encodeObj(claimToken);
+  
+  // Initially set receiver to empty address (will be updated when claimed)
+  const receiver = algosdk.makeEmptyAddressString();
+  
+  // Create TEAL program
+  const tealProgram = createEscrowTEAL(sender, receiver, hash);
+  
+  // Compile the program
+  const compiledProgram = await compileTealProgram(tealProgram);
+  
+  // Create logic signature
+  const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
+  
+  // Get the escrow account address
+  const escrowAddress = logicSignature.address();
+  
+  return {
+    escrowAddress,
+    claimToken,
+    logicSignature
+  };
+}
+
+export async function fundEscrowAccount(
+  senderAccount: string,
+  escrowAddress: string,
+  amount: number
+): Promise<string> {
+  try {
+    // Get suggested params
+    const params = await algodClient.getTransactionParams().do();
+    
+    // Convert USDC amount to micro-USDC (assuming 6 decimal places)
+    const microAmount = Math.floor(amount * 1_000_000);
+    
+    // Create asset transfer transaction
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: senderAccount,
+      to: escrowAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
+    
+    // Note: In a real application, this transaction would need to be signed by the sender
+    // This would happen in the frontend with wallet integration
+    // The signed transaction would be sent to the backend
+    // Here we're just returning the transaction ID for demonstration
+    
+    return txn.txID();
+  } catch (error) {
+    console.error("Error funding escrow account:", error);
+    throw new Error("Failed to fund escrow account");
+  }
+}
+
+export async function claimFromEscrow(
+  escrowAddress: string,
+  logicSignature: algosdk.LogicSigAccount,
+  receiverAddress: string,
+  claimToken: string,
+  amount: number
+): Promise<string> {
+  try {
+    // Get suggested params
+    const params = await algodClient.getTransactionParams().do();
+    
+    // Convert USDC amount to micro-USDC (assuming 6 decimal places)
+    const microAmount = Math.floor(amount * 1_000_000);
+    
+    // Create asset transfer transaction
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: receiverAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      note: new Uint8Array(Buffer.from(claimToken)),
+      suggestedParams: params
+    });
+    
+    // Sign transaction with logic signature
+    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+    
+    // Submit transaction to network
+    const { txId } = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    
+    // Wait for confirmation
+    await algosdk.waitForConfirmation(algodClient, txId, 5);
+    
+    return txId;
+  } catch (error) {
+    console.error("Error claiming from escrow account:", error);
+    throw new Error("Failed to claim from escrow account");
+  }
+}
+
+export async function reclaimFromEscrow(
+  escrowAddress: string,
+  logicSignature: algosdk.LogicSigAccount,
+  senderAddress: string,
+  amount: number
+): Promise<string> {
+  try {
+    // Get suggested params
+    const params = await algodClient.getTransactionParams().do();
+    
+    // Convert USDC amount to micro-USDC (assuming 6 decimal places)
+    const microAmount = Math.floor(amount * 1_000_000);
+    
+    // Create asset transfer transaction
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: senderAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
+    
+    // Sign transaction with logic signature
+    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+    
+    // Submit transaction to network
+    const { txId } = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    
+    // Wait for confirmation
+    await algosdk.waitForConfirmation(algodClient, txId, 5);
+    
+    return txId;
+  } catch (error) {
+    console.error("Error reclaiming from escrow account:", error);
+    throw new Error("Failed to reclaim from escrow account");
+  }
+}
+
+export async function getUserBalance(address: string): Promise<number> {
+  try {
+    // Check if account exists
+    const accountInfo = await algodClient.accountInformation(address).do();
+    
+    // Look for USDC in assets array
+    const usdcAsset = accountInfo.assets.find(
+      (asset: any) => asset["asset-id"] === USDC_ASSET_ID
+    );
+    
+    if (!usdcAsset) {
+      return 0;
+    }
+    
+    // Return the balance converted from micro-USDC
+    return usdcAsset.amount / 1_000_000;
+  } catch (error) {
+    console.error("Error getting user balance:", error);
+    return 0;
+  }
+}
