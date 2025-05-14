@@ -1,0 +1,112 @@
+Looking at the error, it seems the address is becoming null or undefined when creating the escrow. Let me check the issue:
+The problem appears to be in the address validation and handling. The error "Address must not be null or undefined" is being thrown by the Algorand SDK when trying to compile the TEAL program. Here's the fix:
+
+Update the validation in server.ts to be more thorough:
+
+typescript// In server.ts, update the /api/send endpoint
+app.post("/api/send", async (req: Request, res: Response) => {
+  try {
+    console.log("Send API received request:", JSON.stringify(req.body));
+    const validatedData = sendUsdcSchema.parse(req.body);
+    console.log("Validated data:", JSON.stringify(validatedData));
+    
+    // More thorough validation
+    if (!validatedData.senderAddress || 
+        validatedData.senderAddress.trim() === '' ||
+        validatedData.senderAddress === 'null' ||
+        validatedData.senderAddress === 'undefined') {
+      console.error("Error: Invalid senderAddress:", validatedData.senderAddress);
+      return res.status(400).json({ message: "Valid sender address is required" });
+    }
+    
+    // Validate Algorand address format (58 characters, starts with valid prefix)
+    if (validatedData.senderAddress.length !== 58) {
+      console.error("Error: Invalid Algorand address length:", validatedData.senderAddress.length);
+      return res.status(400).json({ message: "Invalid Algorand address format" });
+    }
+    
+    // Rest of the code...
+
+Update the prepareCompleteEscrowDeployment function in algorand-algokit.ts to add validation:
+
+javascriptexport async function prepareCompleteEscrowDeployment(
+  senderAddress: string,
+  amount: number
+): Promise<{
+  unsignedTxns: Uint8Array[];
+  escrowAddress: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  console.log(`Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`);
+  
+  // Validate the sender address
+  if (!senderAddress || senderAddress.trim() === '') {
+    throw new Error('Sender address is required');
+  }
+  
+  // Validate it's a valid Algorand address
+  try {
+    algosdk.decodeAddress(senderAddress);
+  } catch (error) {
+    throw new Error(`Invalid Algorand address format: ${senderAddress}`);
+  }
+  
+  try {
+    // Create escrow account first
+    const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
+    console.log(`Created escrow account at ${escrowAddress}`);
+    
+    // Rest of the function...
+
+Update the createEscrowAccount function to add validation:
+
+javascriptexport async function createEscrowAccount(sender: string): Promise<{
+  escrowAddress: string;
+  claimToken: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  // Validate sender address
+  if (!sender || sender.trim() === '') {
+    throw new Error('Sender address is required for escrow creation');
+  }
+  
+  // Validate it's a valid Algorand address
+  try {
+    algosdk.decodeAddress(sender);
+  } catch (error) {
+    throw new Error(`Invalid Algorand address format for escrow: ${sender}`);
+  }
+  
+  // Generate a unique claim token
+  const claimToken = uuidv4();
+  
+  console.log(`Creating escrow for sender address: ${sender}`);
+  
+  // Create TEAL program with simplified logic
+  const tealProgram = createEscrowTEAL(sender);
+  
+  // Rest of the function...
+
+Make sure the frontend is sending the correct address format. The issue might be coming from the frontend not properly passing the wallet address. Check your frontend code where the API call is made:
+
+typescript// In your frontend code where you call the API
+const sendUsdc = async (data: SendUsdcFormData) => {
+  // Make sure the address is properly passed
+  console.log("Sending USDC with address:", connected.account);
+  
+  const response = await apiRequest("/api/send", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      senderAddress: connected.account, // Make sure this exists
+      recipientEmail: data.recipientEmail,
+      amount: data.amount,
+      note: data.note,
+    }),
+  });
+  
+  return response;
+};
+The main issue appears to be that the sender address is not being properly validated before being used in the TEAL program. The address must be a valid Algorand address (58 characters, proper format) before it can be used in the addr opcode in TEAL.

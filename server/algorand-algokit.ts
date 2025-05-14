@@ -105,6 +105,18 @@ export async function optInEscrowToUSDC(
   logicSignature: algosdk.LogicSigAccount
 ): Promise<string> {
   try {
+    // Validate escrow address
+    if (!escrowAddress || escrowAddress.trim() === '') {
+      throw new Error('Escrow address is null, undefined, or empty');
+    }
+    
+    // Validate it's a valid Algorand address
+    try {
+      algosdk.decodeAddress(escrowAddress);
+    } catch (error) {
+      throw new Error(`Invalid Algorand address format for escrow: ${escrowAddress}`);
+    }
+    
     console.log(`Opting escrow account ${escrowAddress} into USDC`);
     
     // Get suggested params
@@ -136,7 +148,7 @@ export async function optInEscrowToUSDC(
     return transactionId;
   } catch (error) {
     console.error("Error opting escrow into USDC:", error);
-    throw new Error(`Failed to opt escrow into USDC: ${error.message}`);
+    throw new Error(`Failed to opt escrow into USDC: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -149,6 +161,18 @@ export async function createEscrowAccount(sender: string): Promise<{
   claimToken: string;
   logicSignature: algosdk.LogicSigAccount;
 }> {
+  // Validate sender address
+  if (!sender || sender.trim() === '') {
+    throw new Error('Sender address is null, undefined, or empty');
+  }
+  
+  // Validate it's a valid Algorand address
+  try {
+    algosdk.decodeAddress(sender);
+  } catch (error) {
+    throw new Error(`Invalid Algorand address format for sender: ${sender}`);
+  }
+  
   // Generate a unique claim token
   const claimToken = uuidv4();
   
@@ -166,6 +190,11 @@ export async function createEscrowAccount(sender: string): Promise<{
   
   // Get the escrow account address
   const escrowAddress = logicSignature.address().toString();
+  
+  // Validate escrow address
+  if (!escrowAddress || escrowAddress.trim() === '') {
+    throw new Error('Generated escrow address is null, undefined, or empty');
+  }
   
   console.log(`Created escrow with address: ${escrowAddress}`);
   
@@ -216,9 +245,32 @@ export async function prepareCompleteEscrowDeployment(
 }> {
   console.log(`Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`);
   
+  // Validate sender address
+  if (!senderAddress || senderAddress.trim() === '') {
+    throw new Error('Sender address is null, undefined, or empty');
+  }
+  
+  // Validate it's a valid Algorand address
+  try {
+    algosdk.decodeAddress(senderAddress);
+  } catch (error) {
+    throw new Error(`Invalid Algorand address format for sender: ${senderAddress}`);
+  }
+  
+  // Validate amount
+  if (amount <= 0) {
+    throw new Error(`Invalid amount: ${amount}. Amount must be greater than 0.`);
+  }
+  
   try {
     // Create escrow account first
     const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
+    
+    // Validate escrow address again
+    if (!escrowAddress || escrowAddress.trim() === '') {
+      throw new Error('Generated escrow address is null, undefined, or empty');
+    }
+    
     console.log(`Created escrow account at ${escrowAddress}`);
     
     // Get suggested parameters
@@ -226,6 +278,13 @@ export async function prepareCompleteEscrowDeployment(
     
     // 1. Payment transaction to fund escrow with minimum balance
     const minBalance = 200000; // Minimum balance for escrow + opt-in (0.2 ALGO)
+    
+    // Validate addresses again before creating transactions
+    if (!senderAddress || senderAddress.trim() === '' || 
+        !escrowAddress || escrowAddress.trim() === '') {
+      throw new Error('Invalid addresses for transaction creation');
+    }
+    
     const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       from: senderAddress,
       to: escrowAddress,
@@ -235,6 +294,11 @@ export async function prepareCompleteEscrowDeployment(
     console.log(`Created funding transaction for escrow: ${fundingTxn.txID()}`);
     
     // 2. Asset opt-in transaction for escrow
+    // Validate escrow address again before opt-in
+    if (!escrowAddress || escrowAddress.trim() === '') {
+      throw new Error('Invalid escrow address for opt-in transaction');
+    }
+    
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: escrowAddress,
@@ -245,6 +309,12 @@ export async function prepareCompleteEscrowDeployment(
     console.log(`Created USDC opt-in transaction for escrow: ${optInTxn.txID()}`);
     
     // 3. Asset transfer to send USDC to escrow
+    // Validate addresses again before transfer
+    if (!senderAddress || senderAddress.trim() === '' || 
+        !escrowAddress || escrowAddress.trim() === '') {
+      throw new Error('Invalid addresses for USDC transfer transaction');
+    }
+    
     const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
     const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: senderAddress,
