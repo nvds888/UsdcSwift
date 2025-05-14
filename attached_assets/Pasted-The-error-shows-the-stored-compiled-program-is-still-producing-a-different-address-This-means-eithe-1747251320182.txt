@@ -1,0 +1,232 @@
+The error shows the stored compiled program is still producing a different address. This means either:
+
+The compiled program isn't being stored/retrieved correctly
+There's a data corruption issue
+The TEAL source or salt is different
+
+Let's fix this systematically:
+Complete Solution with Salt Storage
+typescript// 1. Updated database schema
+interface EscrowRecord {
+  escrowAddress: string;
+  claimToken: string;
+  senderAddress: string;
+  recipientEmail: string;
+  amount: number;
+  salt: string;
+  tealSource: string; // Store the actual TEAL source
+  compiledProgram: string; // Store compiled program as backup
+  createdAt: Date;
+  status: 'pending' | 'claimed' | 'refunded';
+}
+
+// 2. Create escrow with salt storage
+export async function createEscrowAccount(sender: string): Promise<{
+  escrowAddress: string;
+  claimToken: string;
+  salt: string;
+  tealSource: string;
+  compiledProgram: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  const validatedSender = ensureAddressString(sender);
+  const claimToken = uuidv4();
+  
+  // Generate salt
+  const salt = Math.floor(Math.random() * 1000000).toString();
+  console.log(`Creating escrow with salt: ${salt}`);
+  
+  // Create TEAL program
+  const tealSource = createEscrowTEAL(validatedSender, salt);
+  console.log(`TEAL source created`);
+  
+  // Compile
+  const compileResponse = await algodClient.compile(tealSource).do();
+  const compiledProgram = new Uint8Array(
+    Buffer.from(compileResponse.result, "base64"),
+  );
+  
+  // Create LogicSigAccount
+  const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
+  const escrowAddress = logicSignature.address();
+  
+  console.log(`Escrow address generated: ${escrowAddress}`);
+  
+  // Store compiled program as base64
+  const compiledProgramBase64 = Buffer.from(compiledProgram).toString('base64');
+  
+  // VERIFY before returning
+  const verifyBytes = Buffer.from(compiledProgramBase64, 'base64');
+  const verifyLogicSig = new algosdk.LogicSigAccount(verifyBytes);
+  if (verifyLogicSig.address() !== escrowAddress) {
+    throw new Error("Verification failed during creation!");
+  }
+  
+  return {
+    escrowAddress: ensureAddressString(escrowAddress),
+    claimToken,
+    salt,
+    tealSource,
+    compiledProgram: compiledProgramBase64,
+    logicSignature,
+  };
+}
+
+// 3. Store everything in database
+app.post('/api/create-escrow', async (req, res) => {
+  const { senderAddress, recipientEmail, amount } = req.body;
+  
+  const escrowData = await createEscrowAccount(senderAddress);
+  
+  // Store ALL the data
+  await db.escrows.create({
+    escrowAddress: escrowData.escrowAddress,
+    claimToken: escrowData.claimToken,
+    senderAddress: senderAddress,
+    recipientEmail: recipientEmail,
+    amount: amount,
+    salt: escrowData.salt,
+    tealSource: escrowData.tealSource,
+    compiledProgram: escrowData.compiledProgram,
+    createdAt: new Date(),
+    status: 'pending'
+  });
+  
+  res.json({ success: true });
+});
+
+// 4. Claim using salt to recreate
+export async function claimFromEscrowUsingSalt(params: {
+  escrowAddress: string;
+  recipientAddress: string;
+  amount: number;
+  claimToken: string;
+  senderAddress: string;
+  salt: string;
+}): Promise<string> {
+  const { escrowAddress, recipientAddress, amount, claimToken, senderAddress, salt } = params;
+  
+  console.log(`Claiming from escrow using salt: ${salt}`);
+  console.log(`Original sender: ${senderAddress}`);
+  
+  // Recreate EXACT same TEAL program
+  const tealSource = createEscrowTEAL(senderAddress, salt);
+  console.log("Recreated TEAL source");
+  
+  // Compile it
+  const compileResponse = await algodClient.compile(tealSource).do();
+  const compiledProgram = new Uint8Array(
+    Buffer.from(compileResponse.result, "base64"),
+  );
+  console.log("Recompiled TEAL program");
+  
+  // Create LogicSigAccount
+  const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
+  const generatedAddress = logicSignature.address();
+  
+  console.log(`Generated address: ${generatedAddress}`);
+  console.log(`Expected address: ${escrowAddress}`);
+  
+  if (generatedAddress !== escrowAddress) {
+    // Debug information
+    console.error("Address mismatch!");
+    console.log("Salt used:", salt);
+    console.log("Sender used:", senderAddress);
+    throw new Error(`Cannot recreate escrow: ${generatedAddress} != ${escrowAddress}`);
+  }
+  
+  // Create transaction
+  const params = await algodClient.getTransactionParams().do();
+  const microAmount = Math.floor(amount * 1_000_000);
+  
+  const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+    sender: escrowAddress,
+    receiver: recipientAddress,
+    amount: microAmount,
+    assetIndex: USDC_ASSET_ID,
+    suggestedParams: params,
+  });
+  
+  // Sign with recreated LogicSig
+  const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+  
+  // Submit
+  const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+  const txId = response.txId;
+  await algosdk.waitForConfirmation(algodClient, txId, 5);
+  
+  return txId;
+}
+
+// 5. API endpoint using salt
+app.post('/api/claim', async (req, res) => {
+  const { claimToken, recipientAddress } = req.body;
+  
+  // Get ALL stored data
+  const escrowRecord = await db.escrows.findOne({ claimToken });
+  
+  if (!escrowRecord) {
+    throw new Error("Invalid claim token");
+  }
+  
+  try {
+    // First try: Use salt to recreate
+    const txId = await claimFromEscrowUsingSalt({
+      escrowAddress: escrowRecord.escrowAddress,
+      recipientAddress: recipientAddress,
+      amount: escrowRecord.amount,
+      claimToken: claimToken,
+      senderAddress: escrowRecord.senderAddress,
+      salt: escrowRecord.salt,
+    });
+    
+    res.json({ success: true, transactionId: txId });
+  } catch (error) {
+    console.error("Salt method failed:", error);
+    
+    // Fallback: Try stored compiled program
+    try {
+      const txId = await claimFromEscrowWithCompiledProgram({
+        escrowAddress: escrowRecord.escrowAddress,
+        recipientAddress: recipientAddress,
+        amount: escrowRecord.amount,
+        claimToken: claimToken,
+        compiledProgram: escrowRecord.compiledProgram,
+      });
+      
+      res.json({ success: true, transactionId: txId });
+    } catch (fallbackError) {
+      console.error("All methods failed");
+      throw error;
+    }
+  }
+});
+Debugging the Current Issue
+Add this debug function to understand what's happening:
+typescriptexport async function debugEscrow(escrowRecord: any) {
+  console.log("=== ESCROW DEBUG ===");
+  console.log("Escrow address:", escrowRecord.escrowAddress);
+  console.log("Salt:", escrowRecord.salt);
+  console.log("Sender:", escrowRecord.senderAddress);
+  
+  // Try to recreate
+  const tealSource = createEscrowTEAL(escrowRecord.senderAddress, escrowRecord.salt);
+  const compileResponse = await algodClient.compile(tealSource).do();
+  const compiledProgram = new Uint8Array(
+    Buffer.from(compileResponse.result, "base64"),
+  );
+  const logicSig = new algosdk.LogicSigAccount(compiledProgram);
+  
+  console.log("Recreated address:", logicSig.address());
+  console.log("Match:", logicSig.address() === escrowRecord.escrowAddress);
+  
+  // Check stored compiled program
+  if (escrowRecord.compiledProgram) {
+    const storedBytes = Buffer.from(escrowRecord.compiledProgram, 'base64');
+    const storedLogicSig = new algosdk.LogicSigAccount(storedBytes);
+    console.log("Stored program address:", storedLogicSig.address());
+  }
+  
+  console.log("===================");
+}
+The key is: YES, use the same TEAL source and the same salt. If these are stored correctly, you should be able to recreate the exact LogicSigAccount every time.

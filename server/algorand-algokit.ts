@@ -1283,3 +1283,78 @@ export async function getUserBalance(address: string): Promise<number> {
     throw new Error("Failed to get user balance");
   }
 }
+
+/**
+ * Debug function to troubleshoot escrow address recreation issues
+ */
+export async function debugEscrow(transaction: any) {
+  console.log("=== ESCROW DEBUG ===");
+  console.log("Transaction ID:", transaction.id);
+  console.log("Escrow address:", transaction.smartContractAddress);
+  console.log("Salt:", transaction.tealSalt);
+  console.log("Sender address:", transaction.senderAddress);
+  
+  // Try to recreate using stored salt and sender address
+  if (transaction.tealSource && transaction.tealSalt) {
+    try {
+      // Recreate the TEAL program
+      const tealSource = createEscrowTEAL(transaction.senderAddress, transaction.tealSalt);
+      console.log("Recreated TEAL source from sender and salt");
+      
+      // Compile it
+      const compileResponse = await algodClient.compile(tealSource).do();
+      const compiledProgram = new Uint8Array(
+        Buffer.from(compileResponse.result, "base64")
+      );
+      
+      // Create LogicSig and get address
+      const logicSig = new algosdk.LogicSigAccount(compiledProgram);
+      const recreatedAddress = algosdk.encodeAddress(logicSig.address().publicKey);
+      
+      console.log("Recreated address:", recreatedAddress);
+      console.log("Matches expected address:", recreatedAddress === transaction.smartContractAddress);
+    } catch (error) {
+      console.error("Error recreating escrow from salt and sender:", error);
+    }
+  } else {
+    console.log("Missing TEAL source or salt for recreation");
+  }
+  
+  // Check stored compiled program
+  if (transaction.compiledTealProgram) {
+    try {
+      const storedBytes = new Uint8Array(Buffer.from(transaction.compiledTealProgram, 'base64'));
+      const storedLogicSig = new algosdk.LogicSigAccount(storedBytes);
+      const storedAddress = algosdk.encodeAddress(storedLogicSig.address().publicKey);
+      
+      console.log("Stored program address:", storedAddress);
+      console.log("Matches expected address:", storedAddress === transaction.smartContractAddress);
+    } catch (error) {
+      console.error("Error checking stored compiled program:", error);
+    }
+  } else {
+    console.log("No compiled TEAL program stored");
+  }
+  
+  // Compare with original TEAL source
+  if (transaction.tealSource) {
+    try {
+      // Compile original stored TEAL source
+      const compileResponse = await algodClient.compile(transaction.tealSource).do();
+      const compiledProgram = new Uint8Array(
+        Buffer.from(compileResponse.result, "base64")
+      );
+      
+      // Create LogicSig and get address
+      const logicSig = new algosdk.LogicSigAccount(compiledProgram);
+      const originalSourceAddress = algosdk.encodeAddress(logicSig.address().publicKey);
+      
+      console.log("Original source compiled address:", originalSourceAddress);
+      console.log("Matches expected address:", originalSourceAddress === transaction.smartContractAddress);
+    } catch (error) {
+      console.error("Error compiling original TEAL source:", error);
+    }
+  }
+  
+  console.log("===================");
+}

@@ -21,7 +21,8 @@ import {
   reclaimFromEscrow,
   getUserBalance,
   optInEscrowToUSDC,
-  executeClaimTransaction
+  executeClaimTransaction,
+  debugEscrow
 } from "./algorand-algokit";
 import { USDC_ASSET_ID } from "../client/src/lib/constants";
 import { sendClaimEmail } from "./email";
@@ -376,6 +377,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         try {
           console.log("Attempting claim transaction...");
+          
+          // Debug the escrow to see if we can recreate it properly
+          await debugEscrow(transaction);
+          
           txId = await claimFromEscrowWithCompiledTeal({
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.recipientAddress,
@@ -560,6 +565,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         try {
           console.log("Attempting reclaim transaction...");
+          
+          // Debug the escrow to see if we can recreate it properly
+          await debugEscrow(transaction);
+          
           txId = await claimFromEscrowWithCompiledTeal({
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.senderAddress,
