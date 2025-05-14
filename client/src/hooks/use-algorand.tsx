@@ -60,18 +60,31 @@ export function useAlgorand() {
       console.log(`Signing ${txnsBase64.length} transactions`);
       
       // Convert base64 strings to Uint8Array transactions
-      const unsignedTxns = txnsBase64.map(txnBase64 => 
+      const decodedTxns = txnsBase64.map(txnBase64 => 
         new Uint8Array(Buffer.from(txnBase64, 'base64'))
       );
       
-      // Sign the transactions with the user's wallet
-      const signedTxns = await signTransactions({
-        txns: unsignedTxns,
-        wallet: activeAccount.name,
-      });
+      // Make sure each transaction is properly wrapped in an object
+      // This is needed for the wallet library's expected format
+      const txnGroup = decodedTxns.map(txn => ({
+        txn: txn,
+        signers: [activeAccount.address]
+      }));
       
-      if (!signedTxns || signedTxns.length !== txnsBase64.length) {
-        console.error("Failed to sign transactions or incomplete signatures");
+      // Sign the transactions with the user's wallet
+      let signedTxns;
+      try {
+        signedTxns = await signTransactions({
+          transactions: txnGroup, // Use the correct parameter name for the wallet
+          wallet: activeAccount.name,
+        });
+        
+        if (!signedTxns || signedTxns.length !== txnsBase64.length) {
+          console.error("Failed to sign transactions or incomplete signatures");
+          return false;
+        }
+      } catch (walletError) {
+        console.error("[Wallet] Error signing transactions:", walletError);
         return false;
       }
       
