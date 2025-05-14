@@ -192,6 +192,7 @@ export async function createEscrowAccount(sender: string): Promise<{
   logicSignature: algosdk.LogicSigAccount;
   compiledProgram: string; // Add compiled program to the return value
   tealSource: string; // Add original TEAL source code
+  tealSalt: string; // Add the salt used to create the TEAL program
 }> {
   // Validate sender address
   const validatedSender = ensureAddressString(sender);
@@ -259,6 +260,7 @@ export async function createEscrowAccount(sender: string): Promise<{
     logicSignature,
     compiledProgram: compileResponse.result, // Return the base64 compiled program
     tealSource: tealProgram, // Return the original TEAL source code
+    tealSalt: salt, // Return the salt used to create the TEAL program
   };
 }
 
@@ -280,6 +282,7 @@ export async function prepareCompleteEscrowDeployment(
   logicSignature: algosdk.LogicSigAccount;
   compiledProgram: string; // Include the compiled program
   tealSource: string; // Include the original TEAL source code
+  tealSalt: string; // Include the salt used to create the TEAL program
 }> {
   console.log(
     `Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`,
@@ -478,7 +481,7 @@ export async function prepareCompleteEscrowDeployment(
     });
     
     // Return all transaction info
-    const { compiledProgram, tealSource } = await createEscrowAccount(validatedSender);
+    const { compiledProgram, tealSource, tealSalt } = await createEscrowAccount(validatedSender);
     
     return {
       unsignedTxns: encodedUnsignedTxns, // Only transactions needing signing by the sender
@@ -487,6 +490,7 @@ export async function prepareCompleteEscrowDeployment(
       logicSignature,
       compiledProgram, // Include the compiled program
       tealSource, // Include the original TEAL source code
+      tealSalt, // Include the salt used for the TEAL program
     };
   } catch (error: any) {
     console.error("Error preparing complete escrow deployment:", error);
@@ -1069,13 +1073,15 @@ export async function claimFromEscrowWithCompiledTeal({
   recipientAddress,
   amount,
   compiledTealProgram,
-  tealSource
+  tealSource,
+  tealSalt
 }: {
   escrowAddress: string;
   recipientAddress: string;
   amount: number;
   compiledTealProgram: string; // Base64 encoded compiled TEAL program
-  tealSource?: string; // Original TEAL source code (not used in this simpler implementation)
+  tealSource?: string; // Original TEAL source code
+  tealSalt?: string; // Salt used to create the TEAL program
 }): Promise<string> {
   try {
     console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress}`);
@@ -1127,15 +1133,63 @@ export async function claimFromEscrowWithCompiledTeal({
       throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
     }
     
-    // SIMPLIFIED APPROACH: Just use the stored compiled program directly
-    console.log("Creating LogicSig directly from stored compiled program");
-    const logicSig = new algosdk.LogicSigAccount(
-      new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
-    );
+    // Instead of just using the stored compiled program, recreate it with the original salt if available
+    let logicSig: algosdk.LogicSigAccount;
+    
+    if (tealSource && tealSalt) {
+      console.log("Recreating LogicSig using original TEAL source and salt:", tealSalt);
+      
+      try {
+        // Must use the original SENDER address, not the recipient
+        // The sender is the one authorized to reclaim, and this is critical for validation
+        const transaction = await storage.getTransactionByClaimToken(claimToken);
+        const originalSenderAddress = transaction ? transaction.senderAddress : null;
+        
+        if (!originalSenderAddress) {
+          console.error("Could not find original sender address from transaction");
+          throw new Error("Failed to recreate TEAL program: missing sender address");
+        }
+        
+        console.log("Using original sender address for TEAL recreation:", originalSenderAddress);
+        const tealProgram = createEscrowTEAL(originalSenderAddress, tealSalt);
+        const compileResponse = await algodClient.compile(tealProgram).do();
+        const compiledProgram = new Uint8Array(
+          Buffer.from(compileResponse.result, "base64")
+        );
+        
+        logicSig = new algosdk.LogicSigAccount(compiledProgram);
+        
+        // Verify it generates the correct address
+        const regeneratedAddress = logicSig.address();
+        const encodedRegeneratedAddress = algosdk.encodeAddress(regeneratedAddress.publicKey);
+        
+        console.log(`Regenerated program with salt=${tealSalt} produced address: ${encodedRegeneratedAddress}`);
+        console.log(`Expected escrow address: ${validatedEscrow}`);
+        
+        if (encodedRegeneratedAddress !== validatedEscrow) {
+          console.warn("Regenerated program address doesn't match database escrow address, falling back to compiled program");
+          logicSig = new algosdk.LogicSigAccount(
+            new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+          );
+        }
+      } catch (error) {
+        console.error("Error recreating TEAL program with salt:", error);
+        console.log("Falling back to stored compiled program");
+        logicSig = new algosdk.LogicSigAccount(
+          new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+        );
+      }
+    } else {
+      // Fall back to using the stored compiled program directly
+      console.log("Creating LogicSig directly from stored compiled program (no source or salt available)");
+      logicSig = new algosdk.LogicSigAccount(
+        new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+      );
+    }
     
     // Log the generated address for debugging only
     const encodedGeneratedAddress = algosdk.encodeAddress(logicSig.address().publicKey);
-    console.log(`LogicSig produces address: ${encodedGeneratedAddress}`);
+    console.log(`Final LogicSig produces address: ${encodedGeneratedAddress}`);
     console.log(`Database escrow address: ${validatedEscrow}`);
     
     // For the actual transaction, use the address directly from the database

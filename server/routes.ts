@@ -248,6 +248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get the compiled TEAL program - in algosdk 3.2.0 it's directly available
       const compiledTealProgram = deploymentResult.compiledProgram || '';
       const tealSource = deploymentResult.tealSource || '';
+      const tealSalt = deploymentResult.tealSalt || '';
       
       if (!compiledTealProgram) {
         console.error("Failed to get compiled TEAL program from LogicSig");
@@ -256,8 +257,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log("Compiled TEAL program obtained, length:", compiledTealProgram.length);
       console.log("TEAL source code obtained, length:", tealSource.length);
+      console.log("TEAL salt obtained:", tealSalt);
       
-      // Store transaction in database with both the compiled TEAL program and the original TEAL source
+      // Store transaction in database with both the compiled TEAL program, the original TEAL source, and the salt
       const transaction = await storage.createTransaction({
         senderAddress: validatedData.senderAddress,
         recipientEmail: validatedData.recipientEmail,
@@ -266,6 +268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         smartContractAddress: escrowAddress,
         compiledTealProgram: compiledTealProgram, // Store the compiled program
         tealSource: tealSource, // Store the original TEAL source code
+        tealSalt: tealSalt, // Store the salt used to create the TEAL program
         claimToken: claimToken,
       });
       
