@@ -1,0 +1,135 @@
+Complete List of AlgoKit Utility Methods
+Based on my research, here's a comprehensive overview of the main AlgoKit utility methods and functions available in both Python and TypeScript:
+Core AlgorandClient Methods
+The redesign of Utils solves for this. It unifies everything under a single intuitive AlgorandClient entry point. Introducing AlgoKit 3.0: A new era for Algorand developers AlgoKit Utils is available in TypeScript and Python. The library helps you interact with and develop against the Algorand blockchain with a series of end-to-end capabilities as described below: AlgorandClient - The key entrypoint to the AlgoKit Utils functionality Intro to AlgoKit | Algorand Developer Portal
+Client Initialization
+
+AlgorandClient.from_environment() - Python
+AlgorandClient.fromEnvironment() - TypeScript
+AlgorandClient.fromConfig(config) - From configuration
+
+Client Management
+Client management - Creation of (auto-retry) algod, indexer and kmd clients against various networks resolved from environment or specified configuration Intro to AlgoKit | Algorand Developer Portal
+
+AlgorandClient.client.algod - Access algod client
+AlgorandClient.client.indexer - Access indexer client
+AlgorandClient.client.kmd - Access KMD client
+
+Account Management
+Account management - Creation and use of accounts including mnemonic, rekeyed, multisig, transaction signer (useWallet for dApps and Atomic Transaction Composer compatible signers), idempotent KMD accounts and environment variable injected Intro to AlgoKit | Algorand Developer Portal
+Python Methods:
+
+AlgorandClient.account.from_mnemonic(mnemonic)
+AlgorandClient.account.from_environment(name)
+AlgorandClient.account.from_kmd(name, predicate)
+AlgorandClient.account.random()
+AlgorandClient.account.dispenser_from_environment()
+AlgorandClient.account.localnet_dispenser()
+
+Additional Python Account Utils:
+algokit_utils.get_account(client: algosdk.v2client.algod.AlgodClient, name: str, fund_with_algos: float = 1000, kmd_client: KMDClient | None = None) → algokit_utils.models.Account · Returns an Algorand account with private key loaded by convention based on the given name identifier. algokit_utils — algokit-utils 1.0 documentation
+Transaction Management
+Transaction management - Ability to send single, grouped or Atomic Transaction Composer transactions with consistent and highly configurable semantics, including configurable control of transaction notes (including AR Intro to AlgoKit | Algorand Developer Portal
+Send Methods:
+
+AlgorandClient.send.payment(params)
+AlgorandClient.send.asset_transfer(params)
+AlgorandClient.send.asset_create(params)
+AlgorandClient.send.asset_config(params)
+AlgorandClient.send.asset_destroy(params)
+AlgorandClient.send.asset_opt_in(params)
+AlgorandClient.send.app_call(params)
+
+Create Transaction Methods:
+
+AlgorandClient.createTransaction.payment(params)
+AlgorandClient.createTransaction.assetTransfer(params)
+AlgorandClient.createTransaction.assetCreate(params)
+AlgorandClient.createTransaction.appCall(params)
+
+Application Client Methods
+class algokit_utils.ApplicationClient(algod_client: algosdk.v2client.algod.AlgodClient, app_spec: algokit_utils.application_specification.ApplicationSpecification | pathlib.Path, *, app_id: int = 0, creator: str | algokit_utils.models.Account | None = None, indexer_client: IndexerClient | None = None, existing_deployments: algokit_utils.deploy.AppLookup | None = None, signer: algosdk.atomic_transaction_composer.TransactionSigner | algokit_utils.models.Account | None = None, sender: str | None = None, suggested_params: algosdk.transaction.SuggestedParams | None = None, template_values: algokit_utils.deploy.TemplateValueMapping | None = None, app_name: str | None = None) · A class that wraps an ARC-0032 app spec and provides high productivity methods to deploy and call the app algokit_utils — algokit-utils 1.0 documentation
+Core Methods:
+call(call_abi_method: algokit_utils.models.ABIMethod | bool | None = None, transaction_parameters: algokit_utils.models.OnCompleteCallParameters | algokit_utils.models.OnCompleteCallParametersDict | None = None, **abi_kwargs: algokit_utils.models.ABIArgType) → algokit_utils.models.TransactionResponse | algokit_utils.models.ABITransactionResponse · Submits a signed transaction with specified parameters algokit_utils — algokit-utils 1.0 documentation
+
+ApplicationClient.create() - Create new app
+ApplicationClient.call() - Call app method
+ApplicationClient.opt_in() - Opt-in to app
+ApplicationClient.close_out() - Close out of app
+ApplicationClient.clear_state() - Clear app state
+ApplicationClient.delete() - Delete app
+ApplicationClient.update() - Update app
+
+Deployment:
+deploy(version: str | None = None, *, signer: algosdk.atomic_transaction_composer.TransactionSigner | None = None, sender: str | None = None, allow_update: bool | None = None, allow_delete: bool | None = None, on_update: algokit_utils.deploy.OnUpdate = au_deploy.OnUpdate.Fail, on_schema_break: algokit_utils.deploy.OnSchemaBreak = au_deploy.OnSchemaBreak.Fail, template_values: algokit_utils.deploy.TemplateValueMapping | None = None, create_args: algokit_utils.deploy.ABICreateCallArgs | algokit_utils.deploy.ABICreateCallArgsDict | algokit_utils.deploy.DeployCreateCallArgs | None = None, update_args: algokit_utils.deploy.ABICallArgs | algokit_utils.deploy.ABICallArgsDict | algokit_utils.deploy.DeployCallArgs | None = None, delete_args: algokit_utils.deploy.ABICallArgs | algokit_utils.deploy.ABICallArgsDict | algokit_utils.deploy.DeployCallArgs | None = None) → algokit_utils.deploy.DeployResponse · Deploy an application and update client to reference it. Idempotently deploy (create, updat algokit_utils — algokit-utils 1.0 documentation
+State Management:
+
+ApplicationClient.get_global_state()
+ApplicationClient.get_local_state(account)
+ApplicationClient.get_box_value(name)
+
+Atomic Transaction Composer Methods
+add_method_call(atc: algosdk.atomic_transaction_composer.AtomicTransactionComposer, abi_method: algokit_utils.models.ABIMethod | bool | None = None, *, abi_args: algokit_utils.models.ABIArgsDict | None = None, app_id: int | None = None, parameters: algokit_utils.models.TransactionParameters | algokit_utils.models.TransactionParametersDict | None = None, on_complete: algosdk.transaction.OnComplete = transaction.OnComplete.NoOpOC, local_schema: algosdk.transaction.StateSchema | None = None, global_schema: algosdk.transaction.StateSchema | None = None, approval_program: bytes | None = None, clear_program: bytes | None = None, extra_pages: int | None = None, app_args: list[bytes] | None = None, call_config: algokit_utils.application_specification.CallConfig = au_spec.CallConfig.CALL) → None · Adds a transaction to the AtomicTransactionComposer passed algokit_utils — algokit-utils 1.0 documentation
+
+AlgorandClient.newGroup() - Create new transaction group
+atc.addTransaction(txn) - Add transaction to group
+atc.addMethodCall(params) - Add method call to group
+atc.execute() - Execute grouped transactions
+
+Asset Management
+Opt out from a list of Algorand Standard Assets (ASAs) by transferring them back to their creators. The account also recovers the Minimum Balance Requirement for the asset (100,000 microAlgos) The optOut function manages the opt-out process, permitting the account to discontinue holding a group of assets. It's essential to note that an account can only opt_out of an asset if its balance of that asset is zero. Args: algod_client (AlgodClient): An instance of the AlgodClient class from the algosdk library. account (Account): An instance of the Account class that holds the private key and address for an account. asset_ids (list[int]): A list of integers representing the asset IDs of the ASAs to opt out from. Returns: dict[int, str]: A dictionary where the keys are the asset IDs and the values are the transaction IDs of the executed transactions. algokit_utils — algokit-utils 1.0 documentation
+
+AlgorandClient.send.assetCreate() - Create new ASA
+AlgorandClient.send.assetOptIn() - Opt-in to ASA
+AlgorandClient.send.assetTransfer() - Transfer ASA
+AlgorandClient.send.assetConfig() - Configure ASA
+AlgorandClient.send.assetFreeze() - Freeze ASA
+AlgorandClient.send.assetClawback() - Clawback ASA
+
+Algo Amount Handling
+Algo amount handling - Reliable and terse specification of microAlgo and Algo amounts and conversion between them Intro to AlgoKit | Algorand Developer Portal
+Any AlgoKit Utils function that needs an Algo amount will take an AlgoAmount object, which ensures that there is never any confusion about what value is being passed around. Whenever an AlgoKit Utils function calls into an underlying algosdk function, or if you need to take an AlgoAmount and pass it into an underlying algosdk function (per the modularity principle) you can safely and explicitly convert to microAlgo or Algo. Algo amount handling - algokit-utils-py 3.0 documentation
+
+AlgoAmount.from_algo(algos)
+AlgoAmount.from_microalgos(microalgos)
+(1).algo() - TypeScript convenience
+(1000000).microAlgo() - TypeScript convenience
+
+Fund Management
+algokit_utils.ensure_funded(client: algosdk.v2client.algod.AlgodClient, parameters: algokit_utils._ensure_funded.EnsureBalanceParameters) → algokit_utils._ensure_funded.EnsureFundedResponse | None · Funds a given account using a funding source such that it has a certain amount of algos free to spend (accounting for ALGOs locked in minimum balance requirement) see https://developer.algorand.org/docs/get-details/accounts/#minimum-balance algokit_utils — algokit-utils 1.0 documentation
+
+ensureFunded(client, params) - Ensure account is funded
+transferAlgos(client, params) - Transfer Algos between accounts
+
+Typed Client Methods
+Below is a realistic example that deploys a contract, funds it if newly created, and calls a "hello" method: # Typed: Complete example using a typed application client import algokit_utils from artifacts.hello_world.hello_world_client import ( HelloArgs, # Generated args class HelloWorldFactory, # Generated factory class ) # Get Algorand client from environment variables algorand = algokit_utils.AlgorandClient.from_environment() deployer = algorand.account.from_environment("DEPLOYER") # Create the typed app factory typed_factory = algorand.client.get_typed_app_factory( HelloWorldFactory, defau Typed application clients - algokit-utils-py 3.0 documentation
+
+AlgorandClient.client.get_typed_app_factory() - Get typed factory
+AlgorandClient.client.get_typed_app_client_by_id() - Get typed client by ID
+AlgorandClient.client.get_typed_app_client_by_creator_and_name() - Get typed client by creator and name
+typed_factory.deploy() - Deploy typed app
+typed_client.call_method() - Call typed method
+
+Testing and Development
+import { algorandFixture } from '@algorandfoundation/algokit-utils/testing' To see what's available feel free to consult the reference documentation or consulting the testing capability page. Overview - Algorand Developer Portal
+
+algorandFixture() - Test fixture for tests
+getTestAccount() - Get test account
+algokit localnet start - Start LocalNet
+algokit localnet stop - Stop LocalNet
+
+Debugging and Logging
+algokit_utils.persist_sourcemaps(*, sources: list[algokit_utils._debugging.PersistSourceMapInput], project_root: pathlib.Path, client: algosdk.v2 algokit_utils — algokit-utils 1.0 documentation
+
+persist_sourcemaps() - Save source maps for debugging
+Config.logger - Configure logging
+Config.debug - Enable debug mode
+
+Additional Utilities
+
+Wait for confirmation: waitForConfirmation(client, txId, rounds)
+Transaction signing: signTransaction(txn, signer)
+Get transaction ID: transaction.txID()
+Box storage operations
+Indexer lookups and searches
+Network configuration management
