@@ -113,19 +113,38 @@ export function useAlgorand() {
       
       console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
       
-      // Make sure all decoded transactions are binary types for the wallet
-      // Some wallets are picky about the input types
-      const txnsToBeSigned: Uint8Array[] = allDecodedTxns.map(txn => {
-        if (txn instanceof Uint8Array) {
-          return txn;
-        } else {
-          // Cast to Transaction for TypeScript
-          return algosdk.encodeUnsignedTransaction(txn as algosdk.Transaction);
+      // TxnLab use-wallet expects transactions to be in their original format from algosdk
+      // We need to parse them carefully to match the expected format
+      
+      // First, we'll reparse the base64 transactions to ensure proper format
+      const stxns: Uint8Array[] = [];
+      
+      try {
+        // Re-decode from the base64 strings to ensure consistent formats
+        for (let i = 0; i < allTxns.length; i++) {
+          const rawTxnBytes = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
+          stxns.push(rawTxnBytes);
         }
-      });
+      } catch (err) {
+        console.error("Error decoding transaction bytes:", err);
+        throw err;
+      }
+      
+      console.log(`Prepared ${stxns.length} raw transactions for wallet signing`);
+      
+      // For debugging:
+      try {
+        // Try to decode the first transaction to verify it's valid
+        const decodedFirst = algosdk.decodeUnsignedTransaction(stxns[0]);
+        console.log("First transaction is valid with type:", decodedFirst.type);
+      } catch (e) {
+        console.error("First transaction is invalid:", e);
+      }
       
       // Sign the transactions with the wallet
-      const signedTxns = await signTransactions(txnsToBeSigned, indexesToSign);
+      // This is the critical part - we're passing the properly formatted transaction bytes
+      // and indicating which ones in the group need signing
+      const signedTxns = await signTransactions(stxns, indexesToSign);
       
       if (!signedTxns || signedTxns.some((txn, i) => i === 0 && !txn)) {
         console.error("Failed to sign transactions properly");

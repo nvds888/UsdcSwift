@@ -179,6 +179,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Convert transactions that need to be signed by the user
         console.log(`Encoding ${unsignedTxns.length} transactions to be signed to base64`);
         unsignedTxns.forEach((txn: Uint8Array, i: number) => {
+          // Use try-catch to validate each transaction
+          try {
+            // Verify the transaction can be decoded
+            const decodedTxn = algosdk.decodeUnsignedTransaction(txn);
+            console.log(`Transaction ${i+1} successfully decoded with type: ${decodedTxn.type}`);
+          } catch (e) {
+            console.error(`Transaction ${i+1} failed decoding check:`, e);
+          }
+          
           txnsBase64.push(Buffer.from(txn).toString('base64'));
           console.log(`Encoded transaction ${i+1} for signing`);
         });

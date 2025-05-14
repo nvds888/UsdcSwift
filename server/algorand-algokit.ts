@@ -405,6 +405,15 @@ export async function prepareCompleteEscrowDeployment(
     
     // Now encode all transactions (signed and unsigned)
     // For funding and USDC transfer that need client signing
+    // Important: Ensure we're using the proper transaction objects
+    if (!algosdk.Transaction.prototype.isPrototypeOf(txns[0])) {
+      console.error("Transaction 0 is not a proper Transaction object!");
+    }
+    if (!algosdk.Transaction.prototype.isPrototypeOf(txns[2])) {
+      console.error("Transaction 2 is not a proper Transaction object!");
+    }
+    
+    // Encode the transactions that require signing
     const encodedUnsignedTxns = [
       algosdk.encodeUnsignedTransaction(txns[0] as algosdk.Transaction), // funding transaction (needs signing)
       algosdk.encodeUnsignedTransaction(txns[2] as algosdk.Transaction), // USDC transfer (needs signing)
