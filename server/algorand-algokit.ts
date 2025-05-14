@@ -321,7 +321,7 @@ export async function prepareCompleteEscrowDeployment(
     console.log("Suggested params:", JSON.stringify(loggableParams, null, 2));
 
     // Minimum balance required for accounts with 1 asset (200,000 microALGO = 0.2 ALGO)
-    const minBalance = 200000;
+    const minBalance = 300000; // Increased from 200000 to 300000 (0.3 Algo) to ensure sufficient funds for opt-in
 
     // Prepare transactions manually for complete control
     let txns = [];
