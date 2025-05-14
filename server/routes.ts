@@ -331,29 +331,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
       
       try {
-        // For demo/testing purposes, we'll create a dummy transaction ID
-        // In a production environment, this would actually call the blockchain
-        const dummyTxId = `DEMO-TXID-${Math.floor(Math.random() * 1000000)}`;
-        console.log(`Creating demo transaction ID: ${dummyTxId}`);
+        // Execute the claim transaction directly on the blockchain
+        const txId = await claimFromEscrow({
+          escrowAddress: transaction.smartContractAddress,
+          recipientAddress: validatedData.recipientAddress,
+          amount: parseFloat(transaction.amount),
+          claimToken: validatedData.claimToken
+        });
+        
+        console.log(`Real blockchain transaction completed with txId: ${txId}`);
         
         // Update transaction as claimed in the database
         const updatedTransaction = await storage.markTransactionAsClaimed(
           transaction.id,
           validatedData.recipientAddress,
-          dummyTxId
+          txId
         );
         
-        console.log(`Transaction marked as claimed with demo txId: ${dummyTxId}`);
+        console.log(`Transaction marked as claimed with blockchain txId: ${txId}`);
         
         return res.json({
           ...updatedTransaction,
-          transactionId: dummyTxId,
+          transactionId: txId,
           success: true,
-          message: "Claim successful (demo transaction)"
+          message: "USDC claimed successfully!"
         });
       } catch (txError) {
-        console.error("Error processing claim:", txError);
-        return res.status(500).json({ message: "Failed to process claim" });
+        console.error("Error processing blockchain claim:", txError);
+        
+        // Check if this is a specific error we can provide better feedback for
+        if (txError.message && (
+            txError.message.includes("Logic signature doesn't match") || 
+            txError.message.includes("authorized by")
+          )) {
+          return res.status(400).json({ 
+            message: "This claim link appears to be invalid. Please contact the sender to generate a new link.",
+            error: txError.message
+          });
+        }
+        
+        return res.status(500).json({ 
+          message: "Failed to process claim on the blockchain. Please try again later.",
+          error: txError.message 
+        });
       }
     } catch (error) {
       console.error("Error in claim validation:", error);
@@ -363,7 +383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errors: error.errors,
         });
       }
-      return res.status(500).json({ message: "Failed to claim transaction" });
+      return res.status(500).json({ message: "Failed to validate claim request" });
     }
   });
 
