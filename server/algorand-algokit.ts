@@ -1013,9 +1013,9 @@ export async function claimFromEscrowWithCompiledTeal({
       validatedEscrow = ensureAddressString(escrowAddress);
       validatedRecipient = ensureAddressString(recipientAddress);
       console.log(`Validated addresses - escrow: ${validatedEscrow}, recipient: ${validatedRecipient}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Invalid address:", error);
-      throw new Error(`Failed to validate addresses: ${error.message}`);
+      throw new Error(`Failed to validate addresses: ${error?.message || String(error)}`);
     }
     
     // Get algod client
@@ -1035,9 +1035,9 @@ export async function claimFromEscrowWithCompiledTeal({
       }
       
       console.log(`Recipient ${validatedRecipient} has opted into USDC`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error checking accounts:", error);
-      throw new Error(`Failed to verify accounts: ${error.message}`);
+      throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
     }
     
     // Create LogicSig from the stored compiled program
@@ -1074,20 +1074,22 @@ export async function claimFromEscrowWithCompiledTeal({
     console.log("Submitting claim transaction");
     try {
       const txResponse = await algodClient.sendRawTransaction(signedTxn.blob).do();
-      console.log(`Transaction submitted successfully with ID: ${txResponse.txId}`);
+      // Different versions of algosdk use different property names
+      const txId = txResponse.txId || txResponse.txid;
+      console.log(`Transaction submitted successfully with ID: ${txId}`);
       
       // Wait for confirmation
-      await algokit.waitForConfirmation(txResponse.txId, algodClient);
-      console.log(`Transaction ${txResponse.txId} confirmed`);
+      await algokit.waitForConfirmation(txId, 10, algodClient);
+      console.log(`Transaction ${txId} confirmed`);
       
-      return txResponse.txId;
-    } catch (error) {
+      return txId;
+    } catch (error: any) {
       console.error("Error submitting transaction:", error);
-      throw new Error(`Failed to submit claim transaction: ${error.message}`);
+      throw new Error(`Failed to submit claim transaction: ${error?.message || String(error)}`);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in claim process:", error);
-    throw new Error(`Failed to claim from escrow: ${error.message}`);
+    throw new Error(`Failed to claim from escrow: ${error?.message || String(error)}`);
   }
 }
 

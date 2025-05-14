@@ -501,13 +501,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log("Preparing reclaim transaction from escrow:", transaction.smartContractAddress);
       
+      // Verify we have the compiled program
+      if (!transaction.compiledTealProgram) {
+        console.error("Transaction doesn't have compiled TEAL program");
+        return res.status(500).json({ message: "Transaction data incomplete - missing compiled program" });
+      }
+      
       try {
-        // Execute the reclaim transaction directly on the server using LogicSig
-        const txId = await reclaimFromEscrow(
-          transaction.smartContractAddress,
-          validatedData.senderAddress,
-          parseFloat(transaction.amount)
-        );
+        // Use the stored compiled TEAL program for reclaim
+        console.log("Using stored compiled TEAL program for reclaim");
+        
+        // Execute the reclaim using the stored compiled program
+        const txId = await claimFromEscrowWithCompiledTeal({
+          escrowAddress: transaction.smartContractAddress,
+          recipientAddress: validatedData.senderAddress,
+          amount: parseFloat(transaction.amount),
+          compiledTealProgram: transaction.compiledTealProgram
+        });
         
         console.log(`Reclaim transaction successful with txId: ${txId}`);
         
