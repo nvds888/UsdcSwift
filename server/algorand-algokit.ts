@@ -182,18 +182,18 @@ export async function prepareFundEscrowTransaction(
       genesisID: genesisID,
     };
       
-    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
-    console.log("Using makeAssetTransferTxnWithSuggestedParams");
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParams(
-      senderAccount,   // from 
-      escrowAddress,   // to
-      undefined,       // closeRemainderTo
-      undefined,       // revocationTarget
-      microAmount,     // amount
-      undefined,       // note
-      USDC_ASSET_ID,   // assetIndex
-      suggestedParams  // suggestedParams
-    );
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParamsFromObject method
+    console.log("Using makeAssetTransferTxnWithSuggestedParamsFromObject");
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: senderAccount,
+      to: escrowAddress,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
+      amount: microAmount,
+      note: undefined,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
     
     return {
       txn,
@@ -264,18 +264,18 @@ export async function claimFromEscrow(
       genesisID: genesisID,
     };
       
-    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
-    console.log("Using makeAssetTransferTxnWithSuggestedParams for claim");
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParams(
-      escrowAddress,    // from 
-      receiverAddress,  // to
-      undefined,        // closeRemainderTo
-      undefined,        // revocationTarget
-      microAmount,      // amount
-      Buffer.from(claimToken), // note
-      USDC_ASSET_ID,    // assetIndex
-      suggestedParams   // suggestedParams
-    );
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParamsFromObject method
+    console.log("Using makeAssetTransferTxnWithSuggestedParamsFromObject for claim");
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: receiverAddress,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
+      amount: microAmount,
+      note: Buffer.from(claimToken),
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
     
     // Sign transaction with logic signature
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
@@ -329,12 +329,15 @@ export async function reclaimFromEscrow(
       genesisID: genesisID,
     };
       
-    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
-    console.log("Using makeAssetTransferTxnWithSuggestedParams for reclaim");
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParamsFromObject method
+    console.log("Using makeAssetTransferTxnWithSuggestedParamsFromObject for reclaim");
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: senderAddress,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
       amount: microAmount,
+      note: undefined,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params
     });
