@@ -240,8 +240,11 @@ export async function getUserBalance(address: string): Promise<number> {
       return 0;
     }
     
-    // Log all assets to help debug
-    console.log("Assets in account:", JSON.stringify(assets.map((a: any) => ({ id: a["asset-id"], amount: a.amount }))));
+    // Log all assets to help debug - convert BigInt to string to avoid serialization issues
+    console.log("Assets in account:", assets.map((a: any) => ({ 
+      id: a["asset-id"], 
+      amount: typeof a.amount === 'bigint' ? a.amount.toString() : a.amount 
+    })));
     
     // Look for USDC in assets array
     const usdcAsset = assets.find(
