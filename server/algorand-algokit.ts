@@ -2,6 +2,11 @@ import algosdk from 'algosdk';
 import { v4 as uuidv4 } from 'uuid';
 import * as algokit from '@algorandfoundation/algokit-utils';
 
+// Import types from the algokit-utils package
+import { 
+  getTransactionWithSigner
+} from '@algorandfoundation/algokit-utils';
+
 // Algorand node connection details
 const ALGOD_TOKEN = '';
 const ALGOD_SERVER = 'https://testnet-api.algonode.cloud';
@@ -12,6 +17,13 @@ const USDC_ASSET_ID = 10458941;
 
 // Initialize Algorand client
 const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
+
+// Get AlgoKit client for more advanced operations
+const algorandClient = algokit.getAlgoClient({
+  server: ALGOD_SERVER,
+  token: ALGOD_TOKEN,
+  port: ALGOD_PORT
+});
 
 /**
  * Helper function to extract transaction ID from API response
@@ -184,6 +196,87 @@ export async function createEscrowAccount(sender: string): Promise<{
     claimToken,
     logicSignature
   };
+}
+
+/**
+ * Creates an atomic group transaction that:
+ * 1. Creates escrow account (funding it with min balance)
+ * 2. Opts the escrow into USDC
+ * 3. Transfers USDC from sender to escrow
+ * 
+ * This is an all-in-one solution to handle the complete deployment process
+ */
+export async function prepareCompleteEscrowDeployment(
+  senderAddress: string,
+  amount: number
+): Promise<{
+  unsignedTxns: Uint8Array[];
+  escrowAddress: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  console.log(`Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`);
+  
+  try {
+    // Create escrow account first
+    const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
+    console.log(`Created escrow account at ${escrowAddress}`);
+    
+    // Get suggested parameters
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    
+    // 1. Payment transaction to fund escrow with minimum balance
+    const minBalance = 200000; // Minimum balance for escrow + opt-in (0.2 ALGO)
+    const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      from: senderAddress,
+      to: escrowAddress,
+      amount: minBalance,
+      suggestedParams
+    });
+    console.log(`Created funding transaction for escrow: ${fundingTxn.txID()}`);
+    
+    // 2. Asset opt-in transaction for escrow
+    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: escrowAddress,
+      assetIndex: USDC_ASSET_ID,
+      amount: 0, // Opt-in transaction
+      suggestedParams
+    });
+    console.log(`Created USDC opt-in transaction for escrow: ${optInTxn.txID()}`);
+    
+    // 3. Asset transfer to send USDC to escrow
+    const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
+    const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: senderAddress,
+      to: escrowAddress,
+      assetIndex: USDC_ASSET_ID,
+      amount: microAmount,
+      suggestedParams
+    });
+    console.log(`Created USDC transfer transaction to escrow: ${assetTransferTxn.txID()}`);
+    
+    // Assign group ID to make atomic
+    const txns = [fundingTxn, optInTxn, assetTransferTxn];
+    algosdk.assignGroupID(txns);
+    
+    // Sign the opt-in transaction with logic signature (escrow)
+    const signedOptInTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
+    
+    // Return transactions that need to be signed by the sender
+    // Note: the opt-in transaction is already signed with the logic signature
+    return {
+      unsignedTxns: [
+        algosdk.encodeUnsignedTransaction(fundingTxn),
+        // Second transaction is already signed by escrow account
+        algosdk.encodeUnsignedTransaction(assetTransferTxn)
+      ],
+      escrowAddress,
+      logicSignature
+    };
+  } catch (error) {
+    console.error('Error preparing complete escrow deployment:', error);
+    throw new Error(`Failed to prepare escrow deployment: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
