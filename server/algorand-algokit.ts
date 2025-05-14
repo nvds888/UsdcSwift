@@ -138,7 +138,7 @@ export async function prepareFundEscrowTransaction(
       console.log("Escrow address decoded successfully:", escrowBytes);
     } catch (decodeError) {
       console.error("Error decoding addresses:", decodeError);
-      throw new Error("Invalid Algorand address format: " + decodeError.message);
+      throw new Error("Invalid Algorand address format: " + String(decodeError));
     }
     
     // Get suggested params
@@ -163,37 +163,28 @@ export async function prepareFundEscrowTransaction(
       assetIndex: USDC_ASSET_ID.toString()
     });
     
-    // Create transaction differently using explicit parameters to bypass the object issue
-    console.log("Creating USDC transfer transaction with modified approach");
+    // Create asset transfer transaction using a simpler approach based on AlgoKit guide
+    console.log("Creating asset transfer using direct constructor");
     
-    // Get the necessary parameters directly
-    const fee = params.fee || 1000;
-    const firstRound = params.firstRound || 0;
-    const lastRound = params.lastRound || 0;
-    const genesisHash = params.genesisHash;
-    const genesisID = params.genesisID;
-    
-    // Use suggested params directly to create the transaction
-    const suggestedParams = {
-      fee: fee,
-      firstRound: firstRound,
-      lastRound: lastRound,
-      genesisHash: genesisHash,
-      genesisID: genesisID,
-    };
-      
-    // Create the transaction with the makeAssetTransferTxnWithSuggestedParamsFromObject method
-    console.log("Using makeAssetTransferTxnWithSuggestedParamsFromObject");
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+    // Construct transaction fields manually
+    const txnFields = {
+      type: algosdk.TransactionType.axfer,  // Asset transfer
       from: senderAccount,
       to: escrowAddress,
-      closeRemainderTo: undefined,
-      revocationTarget: undefined,
-      amount: microAmount,
-      note: undefined,
+      note: Buffer.from("USDC Transfer"),
       assetIndex: USDC_ASSET_ID,
-      suggestedParams: params
-    });
+      amount: microAmount,
+      fee: params.fee,
+      firstRound: params.firstRound,
+      lastRound: params.lastRound,
+      genesisHash: params.genesisHash,
+      genesisID: params.genesisID
+    };
+    
+    console.log("Transaction fields prepared, creating Transaction object");
+    
+    // Directly create transaction using constructor
+    const txn = new algosdk.Transaction(txnFields);
     
     return {
       txn,

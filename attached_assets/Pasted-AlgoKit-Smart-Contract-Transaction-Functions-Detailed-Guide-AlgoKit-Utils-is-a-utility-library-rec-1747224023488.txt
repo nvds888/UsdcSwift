@@ -1,0 +1,295 @@
+AlgoKit Smart Contract Transaction Functions - Detailed Guide
+AlgoKit Utils is a utility library recommended for you to use for all chain interactions like sending transactions, creating tokens Intro to AlgoKit | Algorand Developer Portal(ASAs), calling smart contracts, and reading blockchain records.
+Setting Up AlgoKit Clients
+First, you need to set up the necessary clients to interact with Algorand:
+pythonfrom algokit_utils import (
+    get_algod_client,
+    get_indexer_client,
+    get_default_account,
+    ApplicationClient,
+    Account,
+    create_kmd_client,
+    get_algonode_config,
+)
+from algosdk import transaction
+from algosdk.v2client import algod
+
+# Initialize clients
+algod_client = get_algod_client()  # Default to LocalNet
+indexer_client = get_indexer_client()
+
+# For TestNet or MainNet
+config = get_algonode_config("testnet")  # or "mainnet"
+algod_client = algod.AlgodClient(config.token, config.server)
+
+# Get accounts
+deployer = get_default_account(algod_client)  # LocalNet funded account
+Creating an Application Client
+AlgoKit Utils is available in TypeScript and Python. The library helps you interact with and develop against the Algorand blockchain with a series of end-to-end capabilities Intro to AlgoKit | Algorand Developer Portal
+pythonfrom algokit_utils import ApplicationClient
+from pathlib import Path
+
+# Create an application client
+app_client = ApplicationClient(
+    algod_client=algod_client,
+    app_spec=Path("artifacts/application.json"),  # Path to your app spec
+    # OR use the contract class directly
+    app_spec=YourContractClass(),
+    signer=deployer.signer,
+    sender=deployer.address,
+)
+Basic Transaction Types
+1. Deploying a Smart Contract
+python# Deploy a new application
+app_create_result = app_client.create(
+    # Optional parameters for initialization
+    extra_pages=3,  # Extra pages for larger contracts
+    on_schema_break="replace",  # What to do if schema changes
+    on_update="update",  # What to do if app already exists
+)
+
+print(f"App deployed with ID: {app_create_result.app_id}")
+print(f"App address: {app_create_result.app_address}")
+2. Calling Smart Contract Methods
+python# Simple method call
+result = app_client.call(
+    method="my_method",
+    arg1="value1",
+    arg2=123,
+    # Optional parameters
+    boxes=[(app_client.app_id, b"my_box")],  # Box references
+    assets=[asset_id],  # Asset references
+    accounts=[other_account_address],  # Account references
+    apps=[other_app_id],  # App references
+)
+
+# Call with specific transaction parameters
+sp = algod_client.suggested_params()
+sp.fee = 2000  # Set custom fee
+
+result = app_client.call(
+    method="my_method",
+    suggested_params=sp,
+    arg1="value",
+)
+3. Opt-in Transactions
+python# Opt-in to an application
+opt_in_result = app_client.opt_in(
+    # Optional parameters
+    boxes=[(app_client.app_id, b"user_box")],
+)
+
+# Opt-in to an asset
+asset_opt_in_txn = transaction.AssetOptInTxn(
+    sender=account.address,
+    sp=algod_client.suggested_params(),
+    index=asset_id,
+)
+
+signed_txn = asset_opt_in_txn.sign(account.private_key)
+txid = algod_client.send_transaction(signed_txn)
+Atomic Transaction Groups
+Task - Perform a variety of useful operations like signing & sending transactions, minting ASAs, creating vanity address, and more, on the Algorand blockchain Intro to AlgoKit | Algorand Developer Portal
+pythonfrom algokit_utils import TransactionWithSigner, AtomicTransactionComposer
+
+# Create an Atomic Transaction Composer
+atc = AtomicTransactionComposer()
+
+# Add multiple transactions to the group
+# 1. Asset transfer
+asset_transfer = transaction.AssetTransferTxn(
+    sender=sender.address,
+    receiver=app_client.app_address,
+    amt=1000000,  # 1 USDC
+    index=usdc_asset_id,
+    sp=algod_client.suggested_params(),
+)
+
+# 2. App call
+app_call_with_signer = app_client.compose_call(
+    atc=atc,
+    method="deposit",
+    amount=1000000,
+    usdc_payment=TransactionWithSigner(asset_transfer, sender.signer),
+)
+
+# Add another transaction
+payment_txn = transaction.PaymentTxn(
+    sender=sender.address,
+    receiver=another_account,
+    amt=500000,  # 0.5 ALGO
+    sp=algod_client.suggested_params(),
+)
+atc.add_transaction(TransactionWithSigner(payment_txn, sender.signer))
+
+# Execute all transactions atomically
+result = app_client.execute_atc(atc)
+print(f"Transaction IDs: {result.tx_ids}")
+Advanced Transaction Patterns
+1. Box Storage Transactions
+These four arrays are limited to eight total values combined (per application transaction). The accounts array can have no more than four accounts. Overview - Algorand Developer Portal
+python# Create a box
+box_name = b"user_data"
+result = app_client.call(
+    method="create_box",
+    box_name=box_name,
+    boxes=[(app_client.app_id, box_name)],
+    # Pay for box creation
+    extra_fee=400 + (box_size * 50),  # Cover box creation cost
+)
+
+# Read from a box
+result = app_client.call(
+    method="read_box",
+    box_name=box_name,
+    boxes=[(app_client.app_id, box_name)],
+)
+2. Inner Transactions
+Since September 2021 all deployed smart contracts are given their own application account with an associated Algorand public address. These accounts are used by issuing inner transactions from within the smart contract. Overview - Algorand Developer Portal
+In your smart contract (Python):
+python@arc4.abimethod
+def send_payment(self, receiver: Account, amount: UInt64) -> None:
+    """Send payment from app account"""
+    InnerTransaction.begin()
+    InnerTransaction.set_fields({
+        TxnField.type_enum: TxnType.Payment,
+        TxnField.receiver: receiver,
+        TxnField.amount: amount,
+    })
+    InnerTransaction.submit()
+Calling it:
+python# Fund the app account first
+fund_txn = transaction.PaymentTxn(
+    sender=funder.address,
+    receiver=app_client.app_address,
+    amt=1000000,  # 1 ALGO
+    sp=algod_client.suggested_params(),
+)
+
+# Call the method
+result = app_client.call(
+    method="send_payment",
+    receiver=recipient_address,
+    amount=500000,  # 0.5 ALGO
+)
+3. State Management
+python# Read global state
+global_state = app_client.get_global_state()
+print(f"Total deposited: {global_state.get('total_deposited', 0)}")
+
+# Read local state
+local_state = app_client.get_local_state(account_address)
+print(f"User balance: {local_state.get('user_deposited', 0)}")
+
+# Update state through method calls
+result = app_client.call(
+    method="update_global_value",
+    key="setting",
+    value=42,
+)
+Transaction Parameters and Options
+python# Customize suggested parameters
+sp = algod_client.suggested_params()
+sp.fee = 2000  # Set higher fee for priority
+sp.flat_fee = True  # Use flat fee instead of per-byte
+sp.first = sp.first  # First valid round
+sp.last = sp.first + 1000  # Last valid round (transaction valid for ~50 seconds)
+
+# Add note to transaction
+result = app_client.call(
+    method="my_method",
+    suggested_params=sp,
+    note=b"This is a transaction note",
+)
+
+# Add lease to prevent replay
+lease = algosdk.encoding.decode_address("...")
+sp.lease = lease
+Error Handling and Transaction Status
+pythonfrom algosdk.error import AlgodHTTPError
+from algokit_utils import wait_for_confirmation
+
+try:
+    # Send transaction
+    result = app_client.call(method="risky_method")
+    
+    # Wait for confirmation
+    confirmed_txn = wait_for_confirmation(
+        algod_client, 
+        result.tx_id, 
+        wait_rounds=4
+    )
+    
+    print(f"Confirmed in round: {confirmed_txn['confirmed-round']}")
+    
+except AlgodHTTPError as e:
+    print(f"Transaction failed: {e}")
+    
+except Exception as e:
+    print(f"Error: {e}")
+Debugging Transactions
+AlgoKit CLI Documentation Learn more about using and configuring AlgoKit CLI Intro to AlgoKit | Algorand Developer Portal
+python# Enable debug mode
+app_client = ApplicationClient(
+    algod_client=algod_client,
+    app_spec=YourContract(),
+    signer=deployer.signer,
+    sender=deployer.address,
+    debug_mode=True,  # Enable debug output
+)
+
+# Use simulate to test without sending
+result = app_client.simulate(
+    method="test_method",
+    arg1="value",
+)
+print(f"Simulation result: {result}")
+
+# Get transaction trace
+trace = app_client.get_last_log()
+print(f"Execution trace: {trace}")
+TypeScript/JavaScript Examples
+For TypeScript developers:
+typescriptimport { AlgorandClient, Config } from '@algorandfoundation/algokit-utils';
+import { ApplicationClient } from '@algorandfoundation/algokit-types';
+
+// Initialize client
+const algorand = AlgorandClient.fromConfig(Config.getDefaultLocalNetConfig());
+
+// Get app client
+const appClient = new ApplicationClient(
+  {
+    appSpec: appSpec,
+    appId: appId,
+    sender: account,
+    algorand: algorand,
+  }
+);
+
+// Call a method
+const result = await appClient.call({
+  method: 'deposit',
+  args: [amount],
+  boxes: [{appId: appClient.appId, name: 'user_data'}],
+  assets: [usdcAssetId],
+});
+
+// Create atomic transaction group
+const composer = algorand.newGroup();
+
+// Add transactions
+composer
+  .addAssetTransfer({
+    sender: account.addr,
+    receiver: appClient.appAddress,
+    assetId: usdcAssetId,
+    amount: amount,
+  })
+  .addAppCall({
+    appId: appClient.appId,
+    method: 'deposit',
+    args: [amount],
+  });
+
+// Execute
+const result = await composer.execute();
