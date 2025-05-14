@@ -252,18 +252,18 @@ export async function reclaimFromEscrow(
     const microAmount = Math.floor(amount * 1_000_000);
     console.log(`Reclaiming ${microAmount} microUSDC (${amount} USDC)`);
     
-    // Create the transaction using maker function
+    // Create the transaction using the recommended maker function
     console.log(`Creating reclaim transaction: from=${escrowAddress} to=${senderAddress}`);
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParams(
-      escrowAddress,   // from
-      senderAddress,   // to
-      undefined,       // closeRemainderTo
-      undefined,       // revocationTarget
-      microAmount,     // amount
-      undefined,       // note
-      USDC_ASSET_ID,   // assetIndex
-      params           // suggested params
-    );
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: senderAddress,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
+      amount: microAmount,
+      note: undefined,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
     
     // Sign transaction with logic signature
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
