@@ -17,7 +17,8 @@ import {
   submitSignedTransaction,
   claimFromEscrow,
   reclaimFromEscrow,
-  getUserBalance
+  getUserBalance,
+  optInEscrowToUSDC
 } from "./algorand-algokit";
 import { sendClaimEmail } from "./email";
 
@@ -147,26 +148,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log("Stored transaction with id:", transaction.id);
       
+      // Try to opt the escrow account into USDC
+      try {
+        console.log("Attempting to opt the escrow account into USDC...");
+        await optInEscrowToUSDC(escrowAddress, logicSignature);
+        console.log("Successfully opted escrow account into USDC");
+      } catch (optInError) {
+        console.warn("Error during USDC opt-in:", optInError);
+        console.log("Will continue anyway - escrow account might already be opted in");
+        // Continue anyway - the error might be that the account is already opted in
+      }
+      
       // Prepare the transaction for the frontend to sign
       // This creates the actual transaction object that will be signed by the user's wallet
       console.log("Preparing fund escrow transaction with sender:", validatedData.senderAddress, 
                  "escrow:", escrowAddress, "amount:", validatedData.amount);
       
       // Verify addresses are valid before passing to function
-      console.log("Attempting to decode sender address:", validatedData.senderAddress);
+      console.log("Verifying addresses...");
       try {
         algosdk.decodeAddress(validatedData.senderAddress);
-      } catch (error) {
-        console.error("Invalid sender address format:", error);
-        return res.status(400).json({ message: "Invalid sender address format" });
-      }
-      
-      console.log("Attempting to decode escrow address:", escrowAddress);
-      try {
         algosdk.decodeAddress(escrowAddress);
+        console.log("Both addresses successfully verified");
       } catch (error) {
-        console.error("Invalid escrow address format:", error);
-        return res.status(400).json({ message: "Invalid escrow address format" });
+        console.error("Invalid address format:", error);
+        return res.status(400).json({ message: "Invalid address format" });
       }
       
       console.log("Both addresses valid, calling prepareFundEscrowTransaction");
@@ -179,9 +185,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       } catch (error) {
         console.error("Error preparing transaction:", error);
+        // Special handling for escrow not opted in
+        if (error && typeof error === 'object' && 'message' in error && 
+            typeof error.message === 'string' && error.message.includes("not opted into USDC")) {
+          return res.status(400).json({
+            message: "Escrow account not opted into USDC",
+            needsOptIn: true,
+            details: {
+              sender: validatedData.senderAddress,
+              escrow: escrowAddress,
+              amount: parseFloat(validatedData.amount)
+            }
+          });
+        }
+        
         return res.status(500).json({ 
           message: "Failed to prepare transaction", 
-          error: error.message,
+          error: error && typeof error === 'object' && 'message' in error && 
+            typeof error.message === 'string' ? error.message : "Unknown error",
           details: {
             sender: validatedData.senderAddress,
             escrow: escrowAddress,

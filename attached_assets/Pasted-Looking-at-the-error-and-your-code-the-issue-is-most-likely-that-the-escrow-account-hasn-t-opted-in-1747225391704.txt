@@ -1,0 +1,213 @@
+Looking at the error and your code, the issue is most likely that the escrow account hasn't opted into the USDC asset. In Algorand, any account must opt-in to an asset before it can receive that asset. Your TEAL program doesn't handle the opt-in process.
+Here are the main issues and solutions:
+Issue 1: Escrow Account Needs to Opt-In to USDC
+The escrow account created by your logic signature needs to opt-in to USDC before it can receive any USDC tokens.
+Issue 2: TEAL Program Limitations
+Your current TEAL program only handles asset transfers, not opt-ins. You need to modify it to handle both opt-in and transfer transactions.
+Solution: Updated TEAL Program and Functions
+Here's an updated version of your TEAL program that handles both opt-ins and transfers:
+javascript// Updated TEAL program that handles both opt-in and transfers
+export function createEscrowTEAL(sender: string): string {
+  return `#pragma version 8
+  
+  // Allow opt-in to USDC
+  txn TypeEnum
+  int 4 // AssetTransfer
+  ==
+  txn AssetAmount
+  int 0
+  ==
+  txn Sender
+  txn AssetReceiver
+  ==
+  txn XferAsset
+  int ${USDC_ASSET_ID}
+  ==
+  &&
+  &&
+  &&
+  bnz approve // If it's an opt-in, approve
+  
+  // Allow transfer from escrow
+  txn TypeEnum
+  int 4 // AssetTransfer
+  ==
+  txn XferAsset
+  int ${USDC_ASSET_ID}
+  ==
+  &&
+  txn Sender
+  addr ${sender}
+  !=
+  &&
+  bnz approve // If it's a transfer and not from original sender, approve
+  
+  // Allow sender to reclaim
+  txn TypeEnum
+  int 4 // AssetTransfer
+  ==
+  txn XferAsset
+  int ${USDC_ASSET_ID}
+  ==
+  &&
+  txn AssetReceiver
+  addr ${sender}
+  ==
+  &&
+  bnz approve // If it's a transfer back to sender, approve
+  
+  // Reject all other transactions
+  int 0
+  return
+  
+  approve:
+  int 1
+  return`;
+}
+
+// Add opt-in function for the escrow account
+export async function optInEscrowToUSDC(
+  escrowAddress: string,
+  logicSignature: algosdk.LogicSigAccount
+): Promise<string> {
+  try {
+    const params = await algodClient.getTransactionParams().do();
+    
+    // Create opt-in transaction (0 amount transfer to self)
+    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: escrowAddress,
+      amount: 0,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
+    
+    // Sign with logic signature
+    const signedTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
+    
+    // Submit transaction
+    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    
+    // Wait for confirmation
+    const transactionId = extractTransactionId(response);
+    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+    
+    console.log(`Escrow opted into USDC with txId: ${transactionId}`);
+    return transactionId;
+  } catch (error) {
+    console.error("Error opting escrow into USDC:", error);
+    throw new Error("Failed to opt escrow into USDC");
+  }
+}
+
+// Updated createEscrowAccount to include opt-in
+export async function createEscrowAccount(sender: string): Promise<{
+  escrowAddress: string;
+  claimToken: string;
+  logicSignature: algosdk.LogicSigAccount;
+}> {
+  // Generate a unique claim token
+  const claimToken = uuidv4();
+  
+  // Create TEAL program (simplified - no longer needs receiver/hash)
+  const tealProgram = createEscrowTEAL(sender);
+  
+  // Compile the program
+  const compileResponse = await algodClient.compile(tealProgram).do();
+  const compiledProgram = new Uint8Array(Buffer.from(compileResponse.result, "base64"));
+  
+  // Create logic signature
+  const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
+  
+  // Get the escrow account address
+  const escrowAddress = logicSignature.address();
+  
+  console.log(`Created escrow address: ${escrowAddress}`);
+  
+  // Opt the escrow into USDC
+  try {
+    await optInEscrowToUSDC(escrowAddress, logicSignature);
+    console.log("Escrow successfully opted into USDC");
+  } catch (error) {
+    console.warn("Failed to opt escrow into USDC:", error);
+    // Continue anyway - the opt-in might have already been done
+  }
+  
+  return {
+    escrowAddress,
+    claimToken,
+    logicSignature
+  };
+}
+
+// Also check sender's USDC balance before preparing transaction
+export async function prepareFundEscrowTransaction(
+  senderAccount: string,
+  escrowAddress: string,
+  amount: number
+): Promise<{ txn: algosdk.Transaction; txnId: string; escrowAddress: string }> {
+  try {
+    console.log(`Preparing fund transaction with: sender=${senderAccount}, escrow=${escrowAddress}, amount=${amount}`);
+    
+    // Validate input addresses
+    if (!senderAccount || senderAccount.trim() === '') {
+      throw new Error("Sender address is empty or invalid");
+    }
+    
+    if (!escrowAddress || escrowAddress.trim() === '') {
+      throw new Error("Escrow address is empty or invalid");
+    }
+    
+    // Check sender's USDC balance
+    const senderBalance = await getUserBalance(senderAccount);
+    console.log(`Sender USDC balance: ${senderBalance}`);
+    
+    if (senderBalance < amount) {
+      throw new Error(`Insufficient USDC balance. Required: ${amount}, Available: ${senderBalance}`);
+    }
+    
+    // Check if sender is opted into USDC
+    const accountInfo = await algodClient.accountInformation(senderAccount).do();
+    const hasUSDC = accountInfo.assets?.some((asset: any) => Number(asset.assetId) === USDC_ASSET_ID);
+    
+    if (!hasUSDC) {
+      throw new Error("Sender is not opted into USDC asset");
+    }
+    
+    // Get suggested params
+    const params = await algodClient.getTransactionParams().do();
+    console.log("Got network parameters successfully");
+    
+    // Convert USDC amount to micro-USDC
+    const microAmount = Math.floor(amount * 1_000_000);
+    console.log(`Converting ${amount} USDC to ${microAmount} microUSDC`);
+    
+    // Create asset transfer transaction
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: senderAccount,
+      to: escrowAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
+    
+    console.log("Transaction created successfully with ID:", txn.txID());
+    
+    return {
+      txn,
+      txnId: txn.txID(),
+      escrowAddress
+    };
+  } catch (error) {
+    console.error("Error preparing escrow funding transaction:", error);
+    throw new Error(`Failed to prepare escrow funding transaction: ${error.message}`);
+  }
+}
+Additional Debugging Steps
+
+Check Sender's USDC Balance: Make sure the sender has enough USDC
+Check Opt-In Status: Verify the sender is opted into USDC
+Add More Logging: The updated code includes more console logs to help debug
+
+Backend API Update
+Make sure your backend API properly handles these steps:
