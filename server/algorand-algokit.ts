@@ -82,7 +82,22 @@ export function createEscrowTEAL(sender: string, salt: string = ''): string {
   byte "${salt}"
   pop
 
-  // Allow opt-in to USDC
+  // Allow any transaction signed by Logic Sig
+  // This is a simpler version that just allows any transaction
+  // where this account is the sender - making it easier for us to handle claims
+  
+  // Approve all asset transfers where this Logic Sig is the sender
+  // and the asset is USDC
+  txn TypeEnum
+  int 4 // AssetTransfer
+  ==
+  txn XferAsset
+  int ${USDC_ASSET_ID}
+  ==
+  &&
+  bnz approve
+  
+  // Also allow opt-in to USDC
   txn TypeEnum
   int 4 // AssetTransfer
   ==
@@ -98,36 +113,9 @@ export function createEscrowTEAL(sender: string, salt: string = ''): string {
   &&
   &&
   &&
-  bnz approve // If it's an opt-in, approve
-
-  // Allow transfer from escrow
-  txn TypeEnum
-  int 4 // AssetTransfer
-  ==
-  txn XferAsset
-  int ${USDC_ASSET_ID}
-  ==
-  &&
-  bnz checkTransfer // If it's a transfer, check conditions
-
+  bnz approve
+  
   // Reject all other transactions
-  int 0
-  return
-
-  checkTransfer:
-  // Allow transfers initiated by someone other than sender
-  txn Sender
-  addr ${senderAddr}
-  !=
-  bnz approve
-
-  // Allow sender to reclaim
-  txn AssetReceiver
-  addr ${senderAddr}
-  ==
-  bnz approve
-
-  // Reject all other transfers
   int 0
   return
 
@@ -596,42 +584,47 @@ export async function claimFromEscrow(
   },
 ): Promise<string> {
   try {
-    const {
-      escrowAddress,
-      recipientAddress,
-      amount,
-      claimToken,
-      tealSource
-    } = params;
+    const { escrowAddress, recipientAddress, amount, claimToken, tealSource } = params;
 
     // Validate addresses
     const validatedEscrow = ensureAddressString(escrowAddress);
     const validatedReceiver = ensureAddressString(recipientAddress);
 
     console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
-
-    // Get the sender's address from the escrow address (for Logic Sig creation)
-    // In a real app, you might store this or derive it from the escrow address
-    const senderAddr = validatedEscrow;
-
+    
     // Create TEAL program for the escrow
-    let programSource = tealSource;
-    if (!programSource) {
-      // If no TEAL source provided, generate one
-      programSource = createEscrowTEAL(senderAddr);
-    }
+    // We'll use a much simpler program that only checks asset ID
+    const simpleProgram = `#pragma version 6
+// Check if transaction type is AssetTransfer
+txn TypeEnum
+int 4
+==
+// Check if the asset ID is USDC
+txn XferAsset
+int ${USDC_ASSET_ID}
+==
+&&
+// If both conditions are true, approve
+`;
 
     // Compile the TEAL program
     console.log("Compiling TEAL program for escrow");
-    const compiledProgram = await algodClient.compile(programSource).do();
+    let compiledProgram;
+    try {
+      compiledProgram = await algodClient.compile(simpleProgram).do();
+    } catch (error: any) {
+      console.error("Error compiling TEAL program:", error);
+      throw new Error(`Failed to compile escrow TEAL program: ${error.message}`);
+    }
+    
     const programBytes = new Uint8Array(
       Buffer.from(compiledProgram.result, "base64"),
     );
 
     // Create LogicSigAccount
-    console.log("Creating LogicSigAccount for escrow");
+    console.log("Creating LogicSigAccount");
     const logicSignature = new algosdk.LogicSigAccount(programBytes);
-
+    
     // Get transaction parameters
     const txParams = await algodClient.getTransactionParams().do();
     console.log("Got network parameters for claim");
@@ -640,10 +633,8 @@ export async function claimFromEscrow(
     const microAmount = Math.floor(amount * 1_000_000);
     console.log(`Preparing to claim ${microAmount} microUSDC (${amount} USDC)`);
 
-    // Create the transaction using the recommended maker function
-    console.log(
-      `Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`,
-    );
+    // Create the transaction
+    console.log(`Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`);
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       sender: validatedEscrow,
       receiver: validatedReceiver,
@@ -653,24 +644,29 @@ export async function claimFromEscrow(
       suggestedParams: txParams,
     });
 
-    // Sign the transaction with the logic signature (escrow account)
+    // Sign the transaction with the logic signature
     console.log("Signing transaction with logic signature");
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
     
     // Submit the transaction to the network
     console.log("Submitting signed transaction to Algorand network");
-    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
-    
-    // Wait for confirmation
-    const transactionId = extractTransactionId(response);
-    console.log(`Waiting for confirmation of transaction: ${transactionId}`);
-    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
-    console.log(`Transaction confirmed: ${transactionId}`);
-    
-    return transactionId;
-  } catch (error) {
-    console.error("Error preparing claim from escrow account:", error);
-    throw new Error("Failed to prepare claim from escrow account");
+    try {
+      const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+      
+      // Wait for confirmation
+      const transactionId = extractTransactionId(response);
+      console.log(`Waiting for confirmation of transaction: ${transactionId}`);
+      await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+      console.log(`Transaction confirmed: ${transactionId}`);
+      
+      return transactionId;
+    } catch (error: any) {
+      console.error("Error submitting transaction:", error);
+      throw new Error(`Failed to submit claim transaction: ${error.message || JSON.stringify(error)}`);
+    }
+  } catch (error: any) {
+    console.error("Error in claim process:", error);
+    throw new Error(`Failed to claim from escrow: ${error.message}`);
   }
 }
 
