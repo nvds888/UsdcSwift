@@ -1038,7 +1038,15 @@ export async function reclaimFromEscrow(
       return transactionId;
     } catch (error: any) {
       console.error("Error submitting reclaim transaction:", error);
-      throw new Error(`Failed to submit reclaim transaction: ${error.message || JSON.stringify(error)}`);
+      let errorStr: string;
+      try {
+        errorStr = error.message || JSON.stringify(error, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        );
+      } catch (e) {
+        errorStr = "Error object cannot be stringified";
+      }
+      throw new Error(`Failed to submit reclaim transaction: ${errorStr}`);
     }
   } catch (error: any) {
     console.error("Error in reclaim process:", error);

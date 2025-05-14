@@ -193,9 +193,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create a new transaction (send USDC)
   app.post("/api/send", async (req: Request, res: Response) => {
     try {
-      console.log("Send API received request:", JSON.stringify(req.body));
+      // Safe stringify to handle BigInt
+      try {
+        console.log("Send API received request:", JSON.stringify(req.body, (key, value) => 
+          typeof value === 'bigint' ? value.toString() : value
+        ));
+      } catch (e) {
+        console.log("Send API received request: (could not stringify body)");
+      }
       const validatedData = sendUsdcSchema.parse(req.body);
-      console.log("Validated data:", JSON.stringify(validatedData));
+      try {
+        console.log("Validated data:", JSON.stringify(validatedData, (key, value) => 
+          typeof value === 'bigint' ? value.toString() : value
+        ));
+      } catch (e) {
+        console.log("Validated data: (could not stringify)");
+      }
       
       if (!validatedData.senderAddress) {
         console.error("Error: senderAddress is undefined or empty");
