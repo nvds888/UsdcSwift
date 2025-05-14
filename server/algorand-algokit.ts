@@ -385,13 +385,31 @@ export async function prepareCompleteEscrowDeployment(
     );
     console.log(`Signed opt-in transaction with escrow logic signature`);
 
-    // Only send back the transactions that need to be signed by the user (0 and 2)
-    // Transaction 1 (opt-in) is already signed by the escrow logic signature
+    // We need to keep the transaction group intact for the wallet to validate correctly
+    // 1. Replace the opt-in transaction with its signed version
+    // 2. Then extract all transactions for the client
+    
+    // Replace middle transaction with its signed version
+    txns[1] = signedOptInTxn.blob; // This is important - use the signed blob
+    
+    // Now encode all transactions (signed and unsigned)
+    // For funding and USDC transfer that need client signing
+    const encodedUnsignedTxns = [
+      algosdk.encodeUnsignedTransaction(txns[0]), // funding transaction (needs signing)
+      algosdk.encodeUnsignedTransaction(txns[2]), // USDC transfer (needs signing)
+    ];
+    
+    // Encode all transactions including pre-signed ones for transaction group integrity
+    const allEncodedTxns = [
+      algosdk.encodeUnsignedTransaction(txns[0]),      // funding transaction
+      Buffer.from(signedOptInTxn.blob),                // opt-in transaction (pre-signed) 
+      algosdk.encodeUnsignedTransaction(txns[2]),      // USDC transfer
+    ];
+    
+    // Return all transaction info
     return {
-      unsignedTxns: [
-        algosdk.encodeUnsignedTransaction(txns[0]), // funding transaction
-        algosdk.encodeUnsignedTransaction(txns[2]), // USDC transfer
-      ],
+      unsignedTxns: encodedUnsignedTxns, // Only transactions needing signing by the sender
+      allTransactions: allEncodedTxns, // All transactions in the group
       escrowAddress,
       logicSignature,
     };

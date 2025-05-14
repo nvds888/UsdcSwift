@@ -157,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      const { escrowAddress, unsignedTxns } = deploymentResult;
+      const { escrowAddress, unsignedTxns, allTransactions } = deploymentResult;
       
       // Store transaction in database
       const transaction = await storage.createTransaction({
@@ -173,12 +173,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Encode the transactions to base64 for sending to frontend
       let txnsBase64: string[] = [];
+      let allTxnsBase64: string[] = [];
+      
       try {
-        console.log(`Encoding ${unsignedTxns.length} transactions to base64`);
+        // Convert transactions that need to be signed by the user
+        console.log(`Encoding ${unsignedTxns.length} transactions to be signed to base64`);
         unsignedTxns.forEach((txn: Uint8Array, i: number) => {
           txnsBase64.push(Buffer.from(txn).toString('base64'));
-          console.log(`Encoded transaction ${i+1}`);
+          console.log(`Encoded transaction ${i+1} for signing`);
         });
+        
+        // Convert all transactions in the group (including pre-signed ones)
+        if (allTransactions) {
+          console.log(`Encoding ${allTransactions.length} total transactions including pre-signed`);
+          allTransactions.forEach((txn: Uint8Array, i: number) => {
+            allTxnsBase64.push(Buffer.from(txn).toString('base64'));
+            console.log(`Encoded all-transaction ${i+1}`);
+          });
+        }
       } catch (error) {
         console.error("Error encoding transactions:", error);
         return res.status(500).json({ message: "Failed to encode transactions" });
@@ -186,7 +198,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create transaction parameters for the frontend
       const txParams = {
-        txnsBase64,  // Now array of base64 encoded transactions
+        txnsBase64,            // Transactions that need signing
+        allTxnsBase64,         // All transactions including pre-signed ones
         senderAddress: validatedData.senderAddress,
         escrowAddress: escrowAddress,
         amount: parseFloat(validatedData.amount)
