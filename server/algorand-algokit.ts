@@ -225,6 +225,25 @@ export async function createEscrowAccount(sender: string): Promise<{
   // Validate escrow address
   const validatedEscrowAddress = ensureAddressString(escrowAddress);
   console.log(`Created escrow with address: ${validatedEscrowAddress}`);
+  
+  // Verify that the escrow address can be recreated using the salt
+  console.log("Verifying escrow address can be recreated...");
+  const verifyTEAL = createEscrowTEAL(validatedSender, salt);
+  const verifyCompileResponse = await algodClient.compile(verifyTEAL).do();
+  const verifyCompiledProgram = new Uint8Array(
+    Buffer.from(verifyCompileResponse.result, "base64"),
+  );
+  const verifyLogicSig = new algosdk.LogicSigAccount(verifyCompiledProgram);
+  const verifyAddress = algosdk.encodeAddress(verifyLogicSig.address().publicKey);
+  
+  if (verifyAddress !== validatedEscrowAddress) {
+    console.error("VERIFICATION FAILED: Regenerated address doesn't match original");
+    console.log("Original:", validatedEscrowAddress);
+    console.log("Recreated:", verifyAddress);
+    throw new Error("Failed to create consistent escrow address.");
+  }
+  
+  console.log("Verification successful: Escrow address recreation matches original");
 
   // Fund the escrow account with minimum ALGO balance
   try {
@@ -1135,56 +1154,145 @@ export async function claimFromEscrowWithCompiledTeal({
       throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
     }
     
-    // Instead of just using the stored compiled program, recreate it with the original salt if available
-    let logicSig: algosdk.LogicSigAccount;
+    // Validate the sender address explicitly since this is critical
+    const validatedSender = ensureAddressString(senderAddress);
     
-    if (tealSource && tealSalt) {
-      console.log("Recreating LogicSig using original TEAL source and salt:", tealSalt);
-      
+    // MORE ROBUST APPROACH: Try multiple methods to recreate the correct LogicSig
+    let logicSig: algosdk.LogicSigAccount | null = null;
+    let success = false;
+    
+    console.log("ATTEMPTING MULTIPLE METHODS TO RECREATE LOGICSIG");
+    
+    // METHOD 1: Try using stored salt and sender
+    if (tealSource && tealSalt && senderAddress) {
       try {
-        // Must use the original SENDER address, not the recipient
-        // The sender is the one authorized to reclaim, and this is critical for validation
-        console.log("Using original sender address for TEAL recreation:", senderAddress);
-        const tealProgram = createEscrowTEAL(senderAddress, tealSalt);
+        console.log("METHOD 1: Using original sender and salt");
+        console.log("Using sender:", validatedSender);
+        console.log("Using salt:", tealSalt);
+        
+        // Create the TEAL program exactly as it was created originally
+        const tealProgram = createEscrowTEAL(validatedSender, tealSalt);
+        console.log("TEAL program recreated");
+        
+        // Compile it
+        const compileResponse = await algodClient.compile(tealProgram).do();
+        const compiledProgram = new Uint8Array(
+          Buffer.from(compileResponse.result, "base64")
+        );
+        console.log("TEAL program compiled");
+        
+        // Create LogicSig
+        const tempLogicSig = new algosdk.LogicSigAccount(compiledProgram);
+        const regeneratedAddress = algosdk.encodeAddress(tempLogicSig.address().publicKey);
+        
+        console.log(`Method 1 address: ${regeneratedAddress}`);
+        console.log(`Expected address: ${validatedEscrow}`);
+        
+        // If addresses match, we've successfully recreated the LogicSig
+        if (regeneratedAddress === validatedEscrow) {
+          console.log("METHOD 1 SUCCESSFUL: Addresses match");
+          logicSig = tempLogicSig;
+          success = true;
+        } else {
+          console.log("METHOD 1 FAILED: Addresses don't match");
+        }
+      } catch (error) {
+        console.error("Error with Method 1:", error);
+      }
+    }
+    
+    // METHOD 2: Try using stored compiled program directly
+    if (!success && compiledTealProgram) {
+      try {
+        console.log("METHOD 2: Using stored compiled program directly");
+        
+        const storedBytes = new Uint8Array(Buffer.from(compiledTealProgram, 'base64'));
+        const tempLogicSig = new algosdk.LogicSigAccount(storedBytes);
+        const storedAddress = algosdk.encodeAddress(tempLogicSig.address().publicKey);
+        
+        console.log(`Method 2 address: ${storedAddress}`);
+        console.log(`Expected address: ${validatedEscrow}`);
+        
+        if (storedAddress === validatedEscrow) {
+          console.log("METHOD 2 SUCCESSFUL: Addresses match");
+          logicSig = tempLogicSig;
+          success = true;
+        } else {
+          console.log("METHOD 2 FAILED: Addresses don't match");
+        }
+      } catch (error) {
+        console.error("Error with Method 2:", error);
+      }
+    }
+    
+    // METHOD 3: Try using original TEAL source
+    if (!success && tealSource) {
+      try {
+        console.log("METHOD 3: Compiling original TEAL source");
+        
+        const compileResponse = await algodClient.compile(tealSource).do();
+        const compiledProgram = new Uint8Array(
+          Buffer.from(compileResponse.result, "base64")
+        );
+        
+        const tempLogicSig = new algosdk.LogicSigAccount(compiledProgram);
+        const sourceAddress = algosdk.encodeAddress(tempLogicSig.address().publicKey);
+        
+        console.log(`Method 3 address: ${sourceAddress}`);
+        console.log(`Expected address: ${validatedEscrow}`);
+        
+        if (sourceAddress === validatedEscrow) {
+          console.log("METHOD 3 SUCCESSFUL: Addresses match");
+          logicSig = tempLogicSig;
+          success = true;
+        } else {
+          console.log("METHOD 3 FAILED: Addresses don't match");
+        }
+      } catch (error) {
+        console.error("Error with Method 3:", error);
+      }
+    }
+    
+    // METHOD 4: Try with recipient as the authorized address (fallback)
+    if (!success && tealSalt) {
+      try {
+        console.log("METHOD 4: Using recipient as authorized address (fallback)");
+        console.log("Using recipient:", validatedRecipient);
+        console.log("Using salt:", tealSalt);
+        
+        const tealProgram = createEscrowTEAL(validatedRecipient, tealSalt);
         const compileResponse = await algodClient.compile(tealProgram).do();
         const compiledProgram = new Uint8Array(
           Buffer.from(compileResponse.result, "base64")
         );
         
-        logicSig = new algosdk.LogicSigAccount(compiledProgram);
+        const tempLogicSig = new algosdk.LogicSigAccount(compiledProgram);
+        const fallbackAddress = algosdk.encodeAddress(tempLogicSig.address().publicKey);
         
-        // Verify it generates the correct address
-        const regeneratedAddress = logicSig.address();
-        const encodedRegeneratedAddress = algosdk.encodeAddress(regeneratedAddress.publicKey);
+        console.log(`Method 4 address: ${fallbackAddress}`);
+        console.log(`Expected address: ${validatedEscrow}`);
         
-        console.log(`Regenerated program with salt=${tealSalt} produced address: ${encodedRegeneratedAddress}`);
-        console.log(`Expected escrow address: ${validatedEscrow}`);
-        
-        if (encodedRegeneratedAddress !== validatedEscrow) {
-          console.warn("Regenerated program address doesn't match database escrow address, falling back to compiled program");
-          logicSig = new algosdk.LogicSigAccount(
-            new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
-          );
+        if (fallbackAddress === validatedEscrow) {
+          console.log("METHOD 4 SUCCESSFUL: Addresses match");
+          logicSig = tempLogicSig;
+          success = true;
+        } else {
+          console.log("METHOD 4 FAILED: Addresses don't match");
         }
       } catch (error) {
-        console.error("Error recreating TEAL program with salt:", error);
-        console.log("Falling back to stored compiled program");
-        logicSig = new algosdk.LogicSigAccount(
-          new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
-        );
+        console.error("Error with Method 4:", error);
       }
-    } else {
-      // Fall back to using the stored compiled program directly
-      console.log("Creating LogicSig directly from stored compiled program (no source or salt available)");
-      logicSig = new algosdk.LogicSigAccount(
-        new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
-      );
     }
     
-    // Log the generated address for debugging only
-    const encodedGeneratedAddress = algosdk.encodeAddress(logicSig.address().publicKey);
-    console.log(`Final LogicSig produces address: ${encodedGeneratedAddress}`);
-    console.log(`Database escrow address: ${validatedEscrow}`);
+    // If all methods failed, throw an error
+    if (!logicSig) {
+      throw new Error("Could not recreate LogicSig with matching address. All methods failed.");
+    }
+    
+    // Log the generated address for confirmation
+    const finalAddress = algosdk.encodeAddress(logicSig.address().publicKey);
+    console.log(`Final LogicSig produces address: ${finalAddress}`);
+    console.log(`Expected escrow address: ${validatedEscrow}`);
     
     // For the actual transaction, use the address directly from the database
     // regardless of what the LogicSig produces
