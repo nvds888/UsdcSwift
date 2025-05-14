@@ -103,7 +103,7 @@ export function createEscrowTEAL(sender: string): string {
 export async function optInEscrowToUSDC(
   escrowAddress: string,
   logicSignature: algosdk.LogicSigAccount
-): Promise<string> {
+): Promise<algosdk.Transaction> {
   try {
     // Validate escrow address
     if (!escrowAddress || escrowAddress.trim() === '') {
@@ -129,7 +129,15 @@ export async function optInEscrowToUSDC(
     console.log("Using escrow account from logic signature:", escrAccount);
     
     // Create opt-in transaction (0 amount transfer to self)
-    // We'll use the original escrowAddress string which is encoded correctly
+    // Let's look at the algosdk source to see what parameter type it expects
+    console.log("Type checking: escrowAddress is", typeof escrowAddress);
+    
+    // The SDK expects a string for the address parameters
+    if (!escrowAddress || typeof escrowAddress !== 'string') {
+      throw new Error(`Invalid escrow address format: ${escrowAddress} (type: ${typeof escrowAddress})`);
+    }
+    
+    // Create the opt-in transaction
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: escrowAddress,
@@ -141,19 +149,9 @@ export async function optInEscrowToUSDC(
       suggestedParams: params
     });
     
-    // Sign with logic signature
-    const signedTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
-    
-    // Submit transaction
-    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
-    
-    // Wait for confirmation
-    const transactionId = extractTransactionId(response);
-    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
-    
-    console.log(`Escrow successfully opted into USDC with txId: ${transactionId}`);
-    return transactionId;
-  } catch (error) {
+    console.log("Successfully created opt-in transaction");
+    return optInTxn;
+  } catch (error: any) {
     console.error("Error opting escrow into USDC:", error);
     throw new Error(`Failed to opt escrow into USDC: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -220,12 +218,15 @@ export async function createEscrowAccount(sender: string): Promise<{
     console.log("Escrow needs to be funded with minimum ALGO balance first");
     console.log("In a production app, this would be done by the frontend");
     
-    // Try to opt the escrow into USDC
+    // Try to get the opt-in transaction
     try {
-      await optInEscrowToUSDC(escrowAddress, logicSignature);
-      console.log("Escrow successfully opted into USDC");
+      const optInTxn = await optInEscrowToUSDC(escrowAddress, logicSignature);
+      console.log("Successfully created USDC opt-in transaction");
+      
+      // In a full implementation we'd sign and submit this transaction
+      // But for now we're just creating the transaction for later use in an atomic group
     } catch (optInError) {
-      console.warn("Failed to opt escrow into USDC:", optInError);
+      console.warn("Failed to create escrow opt-in transaction:", optInError);
       console.log("Will proceed anyway - opt-in may happen separately");
       // Continue anyway - the opt-in might need to be done separately
     }
