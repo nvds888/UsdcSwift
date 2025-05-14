@@ -118,13 +118,45 @@ export async function prepareFundEscrowTransaction(
   try {
     console.log(`Preparing fund transaction with: sender=${senderAccount}, escrow=${escrowAddress}, amount=${amount}`);
     
+    // Validate input addresses directly
+    if (!senderAccount || senderAccount.trim() === '') {
+      throw new Error("Sender address is empty or invalid");
+    }
+    
+    if (!escrowAddress || escrowAddress.trim() === '') {
+      throw new Error("Escrow address is empty or invalid");
+    }
+    
+    // Validate addresses using algosdk's utility method
+    try {
+      console.log("Decoding sender address:", senderAccount);
+      const senderBytes = algosdk.decodeAddress(senderAccount).publicKey;
+      console.log("Sender address decoded successfully:", senderBytes);
+      
+      console.log("Decoding escrow address:", escrowAddress);
+      const escrowBytes = algosdk.decodeAddress(escrowAddress).publicKey;
+      console.log("Escrow address decoded successfully:", escrowBytes);
+    } catch (decodeError) {
+      console.error("Error decoding addresses:", decodeError);
+      throw new Error("Invalid Algorand address format: " + decodeError.message);
+    }
+    
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
+    console.log("Got transaction parameters:", JSON.stringify(params));
     
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
+    console.log(`Converting ${amount} USDC to ${microAmount} microUSDC`);
     
     // Create asset transfer transaction
+    console.log("Creating transaction with parameters:", {
+      from: senderAccount,
+      to: escrowAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID
+    });
+    
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: senderAccount,
       to: escrowAddress,

@@ -152,16 +152,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Preparing fund escrow transaction with sender:", validatedData.senderAddress, 
                  "escrow:", escrowAddress, "amount:", validatedData.amount);
       
-      const txnParams = await prepareFundEscrowTransaction(
-        validatedData.senderAddress,
-        escrowAddress,
-        parseFloat(validatedData.amount)
-      );
+      // Verify addresses are valid before passing to function
+      console.log("Attempting to decode sender address:", validatedData.senderAddress);
+      try {
+        algosdk.decodeAddress(validatedData.senderAddress);
+      } catch (error) {
+        console.error("Invalid sender address format:", error);
+        return res.status(400).json({ message: "Invalid sender address format" });
+      }
+      
+      console.log("Attempting to decode escrow address:", escrowAddress);
+      try {
+        algosdk.decodeAddress(escrowAddress);
+      } catch (error) {
+        console.error("Invalid escrow address format:", error);
+        return res.status(400).json({ message: "Invalid escrow address format" });
+      }
+      
+      console.log("Both addresses valid, calling prepareFundEscrowTransaction");
+      let txnParams;
+      try {
+        txnParams = await prepareFundEscrowTransaction(
+          validatedData.senderAddress,
+          escrowAddress,
+          parseFloat(validatedData.amount)
+        );
+      } catch (error) {
+        console.error("Error preparing transaction:", error);
+        return res.status(500).json({ 
+          message: "Failed to prepare transaction", 
+          error: error.message,
+          details: {
+            sender: validatedData.senderAddress,
+            escrow: escrowAddress,
+            amount: parseFloat(validatedData.amount)
+          }
+        });
+      }
       
       // Encode the transaction to base64 for sending to frontend
-      const txnBase64 = Buffer.from(
-        txnParams.txn.toByte()
-      ).toString("base64");
+      let txnBase64;
+      try {
+        txnBase64 = Buffer.from(
+          txnParams.txn.toByte()
+        ).toString("base64");
+      } catch (error) {
+        console.error("Error encoding transaction:", error);
+        return res.status(500).json({ message: "Failed to encode transaction" });
+      }
       
       // Create transaction parameters for the frontend
       const txParams = {
