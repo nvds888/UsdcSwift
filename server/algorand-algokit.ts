@@ -14,6 +14,15 @@ const USDC_ASSET_ID = 10458941;
 const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
 
 /**
+ * Helper function to extract transaction ID from API response
+ * Handles different property names in different algosdk versions
+ */
+function extractTransactionId(response: any): string {
+  // Handle different property names in different algosdk versions
+  return response.txId || response.txid;
+}
+
+/**
  * Creates a TEAL program for an escrow account that holds USDC
  * until it is claimed by a specified receiver or reclaimed by the sender
  */
@@ -145,7 +154,7 @@ export async function submitSignedTransaction(signedTxn: Uint8Array): Promise<{ 
     
     // Wait for confirmation (5 rounds)
     // Note: Some versions of algosdk use 'txId', others use 'txid'
-    const transactionId = response.txId || response.txid;
+    const transactionId = extractTransactionId(response);
     await algosdk.waitForConfirmation(algodClient, transactionId, 5);
     
     return {
@@ -191,9 +200,10 @@ export async function claimFromEscrow(
     const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
     
     // Wait for confirmation
-    await algosdk.waitForConfirmation(algodClient, response.txId, 5);
+    const transactionId = extractTransactionId(response);
+    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
     
-    return response.txId;
+    return transactionId;
   } catch (error) {
     console.error("Error claiming from escrow account:", error);
     throw new Error("Failed to claim from escrow account");
@@ -232,9 +242,10 @@ export async function reclaimFromEscrow(
     const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
     
     // Wait for confirmation
-    await algosdk.waitForConfirmation(algodClient, response.txId, 5);
+    const transactionId = extractTransactionId(response);
+    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
     
-    return response.txId;
+    return transactionId;
   } catch (error) {
     console.error("Error reclaiming from escrow account:", error);
     throw new Error("Failed to reclaim from escrow account");
