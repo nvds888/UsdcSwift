@@ -396,15 +396,15 @@ export async function prepareCompleteEscrowDeployment(
     // Now encode all transactions (signed and unsigned)
     // For funding and USDC transfer that need client signing
     const encodedUnsignedTxns = [
-      algosdk.encodeUnsignedTransaction(txns[0]), // funding transaction (needs signing)
-      algosdk.encodeUnsignedTransaction(txns[2]), // USDC transfer (needs signing)
+      algosdk.encodeUnsignedTransaction(txns[0] as algosdk.Transaction), // funding transaction (needs signing)
+      algosdk.encodeUnsignedTransaction(txns[2] as algosdk.Transaction), // USDC transfer (needs signing)
     ];
     
     // Encode all transactions including pre-signed ones for transaction group integrity
     const allEncodedTxns = [
-      algosdk.encodeUnsignedTransaction(txns[0]),      // funding transaction
-      Buffer.from(signedOptInTxn.blob),                // opt-in transaction (pre-signed) 
-      algosdk.encodeUnsignedTransaction(txns[2]),      // USDC transfer
+      algosdk.encodeUnsignedTransaction(txns[0] as algosdk.Transaction),      // funding transaction
+      signedOptInTxn.blob,                                                    // opt-in transaction (pre-signed) 
+      algosdk.encodeUnsignedTransaction(txns[2] as algosdk.Transaction),      // USDC transfer
     ];
     
     // Return all transaction info

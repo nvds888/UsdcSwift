@@ -82,25 +82,50 @@ export function useAlgorand() {
       console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
       // Decode all transactions in the group (signed and unsigned)
-      const allDecodedTxns = allTxns.map(txn => 
-        new Uint8Array(Buffer.from(txn, 'base64'))
-      );
+      // First convert base64 strings to binary data
+      const allDecodedTxns = [];
       
-      // Create an array of indices that need to be signed by this wallet
-      // Typically these would be the 1st and 3rd transaction (0 and 2)
-      const indexesToSign: number[] = [];
-      txnsToSign.forEach(txnToSign => {
-        const txnBase64 = Buffer.from(txnToSign).toString('base64');
-        const index = allTxns.findIndex(groupTxn => groupTxn === txnBase64);
-        if (index !== -1) {
-          indexesToSign.push(index);
+      try {
+        // Properly decode each transaction
+        for (let i = 0; i < allTxns.length; i++) {
+          const txnBinary = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
+          
+          try {
+            // Try to decode as transaction object first
+            const txnObj = algosdk.decodeUnsignedTransaction(txnBinary);
+            allDecodedTxns.push(txnObj);
+            console.log(`Successfully decoded transaction ${i} as object`);
+          } catch (decodeError) {
+            // If that fails, just use the binary version
+            console.log(`Using raw binary for transaction ${i}`);
+            allDecodedTxns.push(txnBinary);
+          }
         }
-      });
+      } catch (error) {
+        console.error("Error decoding transactions:", error);
+        throw error;
+      }
+      
+      // Instead of trying to find matching base64 strings (which can be inconsistent),
+      // let's directly specify which transactions need signing based on our knowledge
+      // of the atomic group structure (typically indexes 0 and 2 need signing)
+      const indexesToSign: number[] = [0, 2]; // Hardcode the indexes we know need signing
       
       console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
       
+      // Make sure all decoded transactions are binary types for the wallet
+      // Some wallets are picky about the input types
+      const txnsToBeSigned: Uint8Array[] = allDecodedTxns.map(txn => {
+        if (txn instanceof Uint8Array) {
+          return txn;
+        } else {
+          // Cast to Transaction for TypeScript
+          return algosdk.encodeUnsignedTransaction(txn as algosdk.Transaction);
+        }
+      });
+      
       // Sign the transactions with the wallet
-      const signedTxns = await signTransactions(allDecodedTxns, indexesToSign);
+      const signedTxns = await signTransactions(txnsToBeSigned, indexesToSign);
       
       if (!signedTxns || signedTxns.some((txn, i) => i === 0 && !txn)) {
         console.error("Failed to sign transactions properly");
