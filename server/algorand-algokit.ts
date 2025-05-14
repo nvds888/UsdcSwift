@@ -596,7 +596,25 @@ export async function claimFromEscrow(
     try {
       const escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
       console.log("Escrow account exists");
-      console.log("Escrow info:", JSON.stringify(escrowInfo, null, 2));
+      console.log("Escrow address:", validatedEscrow);
+      
+      // Log only relevant information to avoid BigInt serialization issues
+      console.log("Escrow amount:", escrowInfo.amount);
+      // Access min-balance using bracket notation for compatibility
+      console.log("Escrow min balance:", escrowInfo?.minBalance || "Unknown");
+      
+      if (escrowInfo.assets) {
+        console.log("Escrow has", escrowInfo.assets.length, "assets");
+        const usdcAsset = escrowInfo.assets.find((asset: any) => 
+          asset['asset-id'] === USDC_ASSET_ID
+        );
+        
+        if (usdcAsset) {
+          console.log("USDC balance:", usdcAsset.amount);
+        } else {
+          console.log("No USDC found in escrow");
+        }
+      }
     } catch (error) {
       console.error("Error retrieving escrow account:", error);
       throw new Error("Failed to retrieve escrow account");
