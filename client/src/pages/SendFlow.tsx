@@ -90,7 +90,23 @@ const SendFlow: React.FC = () => {
       return;
     }
     
-    // Force validation before proceeding
+    // Bypass validation for the amount step
+    if (currentStep === "amount") {
+      const amountValue = form.getValues("amount");
+      if (amountValue && !isNaN(parseFloat(amountValue)) && parseFloat(amountValue) > 0) {
+        setCurrentStep("recipient");
+        return;
+      } else {
+        // Show error
+        form.setError("amount", { 
+          type: "manual", 
+          message: "Please enter a valid amount greater than 0" 
+        });
+        return;
+      }
+    }
+    
+    // Force validation before proceeding (for other steps)
     const isValid = await form.trigger();
     if (!isValid) {
       console.log("Form validation failed:", form.formState.errors);
