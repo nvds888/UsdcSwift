@@ -141,7 +141,7 @@ return
     const accountInfo = await algodClient.accountInformation(senderAddr).do();
     const createdApps = accountInfo.createdApps || [];
     const appId = createdApps.length > 0 
-      ? createdApps[createdApps.length - 1].id + 1 
+      ? Number(createdApps[createdApps.length - 1].id) + 1 
       : 10000000 + Math.floor(Date.now() / 1000) % 1000000;
     
     // Get app address
@@ -372,7 +372,7 @@ export async function getUsdcBalance(address: string): Promise<number> {
     
     // Look for USDC in the assets
     for (const asset of accountInfo.assets || []) {
-      if (asset.assetId === USDC_ASSET_ID) {
+      if (Number(asset.assetId) === USDC_ASSET_ID) {
         return Number(asset.amount) / 1_000_000; // Convert micro USDC to USDC
       }
     }
