@@ -111,8 +111,10 @@ export async function optInEscrowToUSDC(
     }
     
     // Validate it's a valid Algorand address
+    let decodedAddress;
     try {
-      algosdk.decodeAddress(escrowAddress);
+      decodedAddress = algosdk.decodeAddress(escrowAddress);
+      console.log("Decoded escrow address for opt-in:", decodedAddress);
     } catch (error) {
       throw new Error(`Invalid Algorand address format for escrow: ${escrowAddress}`);
     }
@@ -122,7 +124,12 @@ export async function optInEscrowToUSDC(
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
     
+    // Use the account directly from logicSignature to avoid address conversion issues
+    const escrAccount = logicSignature.address();
+    console.log("Using escrow account from logic signature:", escrAccount);
+    
     // Create opt-in transaction (0 amount transfer to self)
+    // We'll use the original escrowAddress string which is encoded correctly
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: escrowAddress,
@@ -188,8 +195,16 @@ export async function createEscrowAccount(sender: string): Promise<{
   // Create logic signature
   const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
   
-  // Get the escrow account address
-  const escrowAddress = logicSignature.address().toString();
+  // Get the escrow account address - DON'T use toString() as it might cause issues with SDK
+  // Instead, directly use the Address object and convert to string exactly when needed
+  // Also let's log the actual value to see what we get
+  const escrowAddr = logicSignature.address();
+  console.log("Raw escrow address type:", typeof escrowAddr);
+  console.log("Raw escrow address:", escrowAddr);
+  
+  // Convert to string in a way that algosdk expects
+  const escrowAddress = algosdk.encodeAddress(escrowAddr.publicKey);
+  console.log("Encoded escrow address:", escrowAddress);
   
   // Validate escrow address
   if (!escrowAddress || escrowAddress.trim() === '') {
@@ -285,6 +300,9 @@ export async function prepareCompleteEscrowDeployment(
       throw new Error('Invalid addresses for transaction creation');
     }
     
+    // Directly use addresses without conversions
+    console.log(`Creating funding transaction with sender=${senderAddress}, escrow=${escrowAddress}`);
+    
     const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       from: senderAddress,
       to: escrowAddress,
@@ -298,6 +316,8 @@ export async function prepareCompleteEscrowDeployment(
     if (!escrowAddress || escrowAddress.trim() === '') {
       throw new Error('Invalid escrow address for opt-in transaction');
     }
+    
+    console.log(`Creating opt-in transaction with escrow=${escrowAddress}`);
     
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
@@ -315,7 +335,11 @@ export async function prepareCompleteEscrowDeployment(
       throw new Error('Invalid addresses for USDC transfer transaction');
     }
     
+    console.log(`Creating USDC transfer from ${senderAddress} to ${escrowAddress}`);
+    
     const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
+    console.log(`USDC amount in micro-units: ${microAmount}`);
+    
     const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: senderAddress,
       to: escrowAddress,
@@ -330,10 +354,21 @@ export async function prepareCompleteEscrowDeployment(
     algosdk.assignGroupID(txns);
     
     // Sign the opt-in transaction with logic signature (escrow)
-    const signedOptInTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
+    console.log("Signing opt-in transaction with escrow logic signature");
+    let signedOptInTxn;
+    try {
+      signedOptInTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
+      console.log("Successfully signed opt-in transaction with logic signature");
+    } catch (error) {
+      console.error("Error signing opt-in transaction:", error);
+      throw new Error(`Failed to sign opt-in transaction: ${error.message}`);
+    }
     
     // Return transactions that need to be signed by the sender
     // Note: the opt-in transaction is already signed with the logic signature
+    console.log("Encoding unsigned transactions for wallet signing");
+    console.log("Returning transaction data with escrow address:", escrowAddress);
+    
     return {
       unsignedTxns: [
         algosdk.encodeUnsignedTransaction(fundingTxn),
