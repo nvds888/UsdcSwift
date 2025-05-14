@@ -261,127 +261,96 @@ export async function prepareCompleteEscrowDeployment(
 }> {
   console.log(`Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`);
   
-  // Validate sender address
+  // Make sure we have a valid sender address
   if (!senderAddress || senderAddress.trim() === '') {
     throw new Error('Sender address is null, undefined, or empty');
   }
   
-  // Validate it's a valid Algorand address
-  try {
-    algosdk.decodeAddress(senderAddress);
-  } catch (error) {
-    throw new Error(`Invalid Algorand address format for sender: ${senderAddress}`);
-  }
-  
-  // Validate amount
   if (amount <= 0) {
     throw new Error(`Invalid amount: ${amount}. Amount must be greater than 0.`);
   }
   
   try {
-    // Create escrow account first
+    // Step 1: Create the escrow account
     const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
     
-    // Validate escrow address again
-    if (!escrowAddress || escrowAddress.trim() === '') {
-      throw new Error('Generated escrow address is null, undefined, or empty');
-    }
+    console.log(`Created escrow account at address: ${escrowAddress}`);
     
-    console.log(`Created escrow account at ${escrowAddress}`);
+    // Step 2: Get suggested transaction parameters
+    const params = await algodClient.getTransactionParams().do();
     
-    // Get suggested parameters
-    const suggestedParams = await algodClient.getTransactionParams().do();
+    // Make sure we extract the correct fields
+    console.log("Suggested params:", JSON.stringify(params, null, 2));
     
-    // 1. Payment transaction to fund escrow with minimum balance
-    const minBalance = 200000; // Minimum balance for escrow + opt-in (0.2 ALGO)
+    // Minimum balance required for accounts with 1 asset (200,000 microALGO = 0.2 ALGO)
+    const minBalance = 200000;
     
-    // Validate addresses again before creating transactions
-    if (!senderAddress || senderAddress.trim() === '' || 
-        !escrowAddress || escrowAddress.trim() === '') {
-      throw new Error('Invalid addresses for transaction creation');
-    }
+    // Prepare transactions manually for complete control
+    let txns = [];
     
-    // Directly use addresses without conversions
-    console.log(`Creating funding transaction with sender=${senderAddress}, escrow=${escrowAddress}`);
-    
+    // Transaction 1: Fund escrow with minimum ALGO
+    // Create payment transaction using makePaymentTxnWithSuggestedParamsFromObject
     const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       from: senderAddress,
       to: escrowAddress,
       amount: minBalance,
-      suggestedParams
+      closeRemainderTo: undefined,
+      note: undefined,
+      suggestedParams: params
     });
-    console.log(`Created funding transaction for escrow: ${fundingTxn.txID()}`);
     
-    // 2. Asset opt-in transaction for escrow
-    // Validate escrow address again before opt-in
-    if (!escrowAddress || escrowAddress.trim() === '') {
-      throw new Error('Invalid escrow address for opt-in transaction');
-    }
+    console.log(`Created funding transaction: ${fundingTxn.txID()}`);
+    txns.push(fundingTxn);
     
-    console.log(`Creating opt-in transaction with escrow=${escrowAddress}`);
-    
+    // Transaction 2: Opt escrow into USDC
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: escrowAddress,
+      amount: 0,
       assetIndex: USDC_ASSET_ID,
-      amount: 0, // Opt-in transaction
-      suggestedParams
+      suggestedParams: params
     });
-    console.log(`Created USDC opt-in transaction for escrow: ${optInTxn.txID()}`);
     
-    // 3. Asset transfer to send USDC to escrow
-    // Validate addresses again before transfer
-    if (!senderAddress || senderAddress.trim() === '' || 
-        !escrowAddress || escrowAddress.trim() === '') {
-      throw new Error('Invalid addresses for USDC transfer transaction');
-    }
+    console.log(`Created USDC opt-in transaction: ${optInTxn.txID()}`);
+    txns.push(optInTxn);
     
-    console.log(`Creating USDC transfer from ${senderAddress} to ${escrowAddress}`);
-    
+    // Transaction 3: Send USDC to escrow
     const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
-    console.log(`USDC amount in micro-units: ${microAmount}`);
+    const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParams(
+      senderAddress,       // from
+      escrowAddress,       // to
+      undefined,           // closeRemainderTo
+      undefined,           // revocationTarget
+      microAmount,         // amount (in micro-units)
+      undefined,           // note
+      USDC_ASSET_ID,       // assetIndex
+      params               // suggestedParams
+    );
     
-    const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: senderAddress,
-      to: escrowAddress,
-      assetIndex: USDC_ASSET_ID,
-      amount: microAmount,
-      suggestedParams
-    });
-    console.log(`Created USDC transfer transaction to escrow: ${assetTransferTxn.txID()}`);
+    console.log(`Created USDC transfer transaction: ${assetTransferTxn.txID()}`);
+    txns.push(assetTransferTxn);
     
-    // Assign group ID to make atomic
-    const txns = [fundingTxn, optInTxn, assetTransferTxn];
+    // Make them an atomic group
     algosdk.assignGroupID(txns);
+    console.log(`Assigned group ID to transaction set`);
     
-    // Sign the opt-in transaction with logic signature (escrow)
-    console.log("Signing opt-in transaction with escrow logic signature");
-    let signedOptInTxn;
-    try {
-      signedOptInTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
-      console.log("Successfully signed opt-in transaction with logic signature");
-    } catch (error) {
-      console.error("Error signing opt-in transaction:", error);
-      throw new Error(`Failed to sign opt-in transaction: ${error.message}`);
-    }
+    // Sign the escrow opt-in transaction with logic signature
+    const signedOptInTxn = algosdk.signLogicSigTransaction(optInTxn, logicSignature);
+    console.log(`Signed opt-in transaction with escrow logic signature`);
     
-    // Return transactions that need to be signed by the sender
-    // Note: the opt-in transaction is already signed with the logic signature
-    console.log("Encoding unsigned transactions for wallet signing");
-    console.log("Returning transaction data with escrow address:", escrowAddress);
-    
+    // Only send back the transactions that need to be signed by the user (0 and 2)
+    // Transaction 1 (opt-in) is already signed by the escrow logic signature
     return {
       unsignedTxns: [
-        algosdk.encodeUnsignedTransaction(fundingTxn),
-        // Second transaction is already signed by escrow account
-        algosdk.encodeUnsignedTransaction(assetTransferTxn)
+        algosdk.encodeUnsignedTransaction(txns[0]), // funding transaction
+        algosdk.encodeUnsignedTransaction(txns[2])  // USDC transfer
       ],
       escrowAddress,
       logicSignature
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error preparing complete escrow deployment:', error);
-    throw new Error(`Failed to prepare escrow deployment: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to prepare escrow deployment: ${error.message}`);
   }
 }
 
