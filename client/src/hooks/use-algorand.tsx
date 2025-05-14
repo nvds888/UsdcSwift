@@ -64,20 +64,12 @@ export function useAlgorand() {
         new Uint8Array(Buffer.from(txnBase64, 'base64'))
       );
       
-      // Make sure each transaction is properly wrapped in an object
-      // This is needed for the wallet library's expected format
-      const txnGroup = decodedTxns.map(txn => ({
-        txn: txn,
-        signers: [activeAccount.address]
-      }));
-      
-      // Sign the transactions with the user's wallet
+      // Sign the transactions directly with the user's wallet
+      // TxnLab wallet expects either Transaction[] or Uint8Array[] 
       let signedTxns;
       try {
-        signedTxns = await signTransactions({
-          transactions: txnGroup, // Use the correct parameter name for the wallet
-          wallet: activeAccount.name,
-        });
+        // Pass the Uint8Array transactions directly to the wallet
+        signedTxns = await signTransactions(decodedTxns);
         
         if (!signedTxns || signedTxns.length !== txnsBase64.length) {
           console.error("Failed to sign transactions or incomplete signatures");
@@ -91,6 +83,13 @@ export function useAlgorand() {
       // Submit the signed transactions to the backend
       // For simplicity, we'll just submit the first transaction
       // In a production app, we should handle all transactions properly
+      
+      // Handle potential null value in the signed transactions
+      if (!signedTxns[0]) {
+        console.error("First transaction was not signed properly");
+        return false;
+      }
+      
       const response = await apiRequest("POST", "/api/submit-transaction", {
         signedTxn: Buffer.from(signedTxns[0]).toString('base64'),
         transactionId
@@ -362,16 +361,21 @@ export function useAlgorand() {
       // Some wallets expect the transaction to be encoded in a specific way
       const encodedTxn = algosdk.encodeUnsignedTransaction(txn);
       
-      // Sign the transaction with the wallet - pass the binary transaction
+      // Sign the transaction with the wallet - pass the binary transaction directly
+      // No need to wrap it in an object with signers, the wallet handles that internally
       const signedTransactions = await signTransactions([encodedTxn]);
       
       if (!signedTransactions || signedTransactions.length === 0) {
         throw new Error("Failed to sign transaction");
       }
       
-      // The wallet should return a signed transaction Uint8Array that we need to convert to base64
-      // Handle the case where signedTransactions[0] might be null
-      const signedTxn = signedTransactions[0] || new Uint8Array();
+      // Check if the transaction was signed successfully
+      if (!signedTransactions[0]) {
+        throw new Error("Transaction was not signed properly");
+      }
+      
+      // The wallet returns a signed transaction Uint8Array that we need to convert to base64
+      const signedTxn = signedTransactions[0];
       const signedTxnBase64 = Buffer.from(signedTxn).toString('base64');
       
       const result = await submitSignedTransaction({
