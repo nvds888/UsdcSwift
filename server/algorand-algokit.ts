@@ -571,12 +571,9 @@ export async function reclaimFromEscrow(
       `Creating reclaim transaction: from=${validatedEscrow} to=${validatedSender}`,
     );
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedEscrow,
-      to: validatedSender,
-      closeRemainderTo: undefined,
-      revocationTarget: undefined,
+      sender: validatedEscrow,         // Correct: 'sender' not 'from'
+      receiver: validatedSender,       // Correct: 'receiver' not 'to'
       amount: microAmount,
-      note: undefined,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params,
     });
