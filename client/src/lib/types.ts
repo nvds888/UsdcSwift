@@ -12,6 +12,7 @@ export interface Transaction {
   claimedByAddress?: string;
   transactionId?: string;
   expiresAt?: string;
+  status?: string; // 'pending', 'funded', 'claimed', 'expired'
 }
 
 export interface SendUsdcParams {
@@ -64,6 +65,7 @@ export interface WalletAccount {
 
 export enum TransactionStatus {
   PENDING = "pending",
+  FUNDED = "funded",
   CLAIMED = "claimed",
   EXPIRED = "expired"
 }

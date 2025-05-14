@@ -443,10 +443,17 @@ const SendFlowNew: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mb-4">
                       <span className="text-gray-600">Status:</span>
-                      <span className="inline-flex items-center">
-                        <Clock className="h-4 w-4 text-yellow-500 mr-1" />
-                        <span className="text-yellow-700 font-medium">Pending</span>
-                      </span>
+                      {transaction.status === 'funded' ? (
+                        <span className="inline-flex items-center">
+                          <Check className="h-4 w-4 text-green-500 mr-1" />
+                          <span className="text-green-700 font-medium">Funded</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center">
+                          <Clock className="h-4 w-4 text-yellow-500 mr-1" />
+                          <span className="text-yellow-700 font-medium">Pending</span>
+                        </span>
+                      )}
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">Smart Contract:</span>
