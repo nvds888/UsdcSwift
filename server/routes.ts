@@ -75,21 +75,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate the request using the schema
       const validatedData = signedTransactionSchema.parse(req.body);
       
-      const { signedTxn, transactionId } = validatedData;
+      const { signedTxn, transactionId, isSequential, sequentialIndex } = validatedData;
       
       // Decode the base64 signed transaction
       const decodedTxn = Buffer.from(signedTxn, "base64");
       
-      console.log("Received signed transaction to submit", { 
-        transactionId: String(transactionId),
-        signedTxnLength: decodedTxn.length 
-      });
+      // Log whether this is a sequential transaction
+      if (isSequential) {
+        console.log(`Processing sequential transaction ${sequentialIndex} for transaction ID ${transactionId}`);
+      } else {
+        console.log("Received signed transaction to submit", { 
+          transactionId: String(transactionId),
+          signedTxnLength: decodedTxn.length 
+        });
+      }
       
       // Submit the signed transaction
       // For testing, let's handle potential errors
       let txId;
       try {
         txId = await submitSignedTransaction(decodedTxn);
+        if (isSequential) {
+          console.log(`Sequential transaction ${sequentialIndex} submitted with txId: ${txId}`);
+        }
       } catch (error) {
         console.error("Failed to submit transaction:", error);
         // For testing, create a temporary transaction ID

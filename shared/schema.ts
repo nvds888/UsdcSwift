@@ -63,6 +63,9 @@ export const reclaimUsdcSchema = z.object({
 export const signedTransactionSchema = z.object({
   signedTxn: z.string().min(1, "Signed transaction is required"),
   transactionId: z.number().int().positive(),
+  // Optional fields for sequential transaction processing
+  isSequential: z.boolean().optional(),
+  sequentialIndex: z.number().int().min(0).optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
