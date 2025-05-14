@@ -17,6 +17,7 @@ import {
   prepareCompleteEscrowDeployment,
   submitSignedTransaction,
   claimFromEscrow,
+  claimFromEscrowWithCompiledTeal,
   reclaimFromEscrow,
   getUserBalance,
   optInEscrowToUSDC,
@@ -231,13 +232,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const { escrowAddress, unsignedTxns, allTransactions } = deploymentResult;
       
-      // Store transaction in database
+      // Get the compiled TEAL program - in algosdk 3.2.0 it's directly available
+      const compiledTealProgram = deploymentResult.compiledProgram || '';
+      
+      if (!compiledTealProgram) {
+        console.error("Failed to get compiled TEAL program from LogicSig");
+        return res.status(500).json({ message: "Failed to prepare escrow deployment - could not get compiled program" });
+      }
+      
+      console.log("Compiled TEAL program obtained, length:", compiledTealProgram.length);
+      
+      // Store transaction in database with the compiled TEAL program
       const transaction = await storage.createTransaction({
         senderAddress: validatedData.senderAddress,
         recipientEmail: validatedData.recipientEmail,
         amount: validatedData.amount,
         note: validatedData.note,
         smartContractAddress: escrowAddress,
+        compiledTealProgram: compiledTealProgram, // Store the compiled program
         claimToken: claimToken,
       });
       
@@ -332,14 +344,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
       
       try {
-        // Execute the claim transaction directly on the server
-        // This handles everything: creating the transaction, signing with LogicSig, and submitting
-        const txId = await claimFromEscrow({
+        // Use the stored compiled TEAL program to claim from the escrow
+        console.log("Using stored compiled TEAL program for claim");
+        
+        // Verify we have the compiled program
+        if (!transaction.compiledTealProgram) {
+          console.error("Transaction doesn't have compiled TEAL program");
+          return res.status(500).json({ message: "Transaction data incomplete - missing compiled program" });
+        }
+        
+        // Execute the claim using the stored compiled program
+        const txId = await claimFromEscrowWithCompiledTeal({
           escrowAddress: transaction.smartContractAddress,
           recipientAddress: validatedData.recipientAddress,
           amount: parseFloat(transaction.amount),
-          claimToken: validatedData.claimToken,
-          senderAddress: transaction.senderAddress // Pass the original sender address for authorization
+          compiledTealProgram: transaction.compiledTealProgram
         });
         
         console.log(`Claim transaction successful with txId: ${txId}`);

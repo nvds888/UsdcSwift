@@ -143,6 +143,7 @@ export async function createEscrowAccount(sender: string): Promise<{
   escrowAddress: string;
   claimToken: string;
   logicSignature: algosdk.LogicSigAccount;
+  compiledProgram: string; // Add compiled program to the return value
 }> {
   // Validate sender address
   const validatedSender = ensureAddressString(sender);
@@ -208,6 +209,7 @@ export async function createEscrowAccount(sender: string): Promise<{
     escrowAddress: validatedEscrowAddress,
     claimToken,
     logicSignature,
+    compiledProgram: compileResponse.result, // Return the base64 compiled program
   };
 }
 
@@ -227,6 +229,7 @@ export async function prepareCompleteEscrowDeployment(
   allTransactions: Uint8Array[];
   escrowAddress: string;
   logicSignature: algosdk.LogicSigAccount;
+  compiledProgram: string; // Include the compiled program
 }> {
   console.log(
     `Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`,
@@ -419,11 +422,14 @@ export async function prepareCompleteEscrowDeployment(
     });
     
     // Return all transaction info
+    const { compiledProgram } = await createEscrowAccount(validatedSender);
+    
     return {
       unsignedTxns: encodedUnsignedTxns, // Only transactions needing signing by the sender
       allTransactions: allEncodedTxns, // All transactions in the group
       escrowAddress,
       logicSignature,
+      compiledProgram, // Include the compiled program
     };
   } catch (error: any) {
     console.error("Error preparing complete escrow deployment:", error);
@@ -982,6 +988,109 @@ export async function reclaimFromEscrow(
 /**
  * Gets the USDC balance of an account
  */
+/**
+ * Claims USDC from an escrow account using a stored compiled TEAL program
+ */
+export async function claimFromEscrowWithCompiledTeal({
+  escrowAddress,
+  recipientAddress,
+  amount,
+  compiledTealProgram
+}: {
+  escrowAddress: string;
+  recipientAddress: string;
+  amount: number;
+  compiledTealProgram: string; // Base64 encoded compiled TEAL program
+}): Promise<string> {
+  try {
+    console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress} using stored compiled program`);
+    
+    // Validate addresses
+    let validatedEscrow: string;
+    let validatedRecipient: string;
+    
+    try {
+      validatedEscrow = ensureAddressString(escrowAddress);
+      validatedRecipient = ensureAddressString(recipientAddress);
+      console.log(`Validated addresses - escrow: ${validatedEscrow}, recipient: ${validatedRecipient}`);
+    } catch (error) {
+      console.error("Invalid address:", error);
+      throw new Error(`Failed to validate addresses: ${error.message}`);
+    }
+    
+    // Get algod client
+    const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
+    
+    // Verify that the recipient account exists and has opted into USDC
+    try {
+      const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
+      const assets = accountInfo.assets || [];
+      
+      // Check if recipient has opted into USDC
+      const hasOptedIn = assets.some((asset: any) => asset['asset-id'] === USDC_ASSET_ID);
+      
+      if (!hasOptedIn) {
+        console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
+        throw new Error("Recipient has not opted into USDC. They must opt in to the USDC asset first.");
+      }
+      
+      console.log(`Recipient ${validatedRecipient} has opted into USDC`);
+    } catch (error) {
+      console.error("Error checking accounts:", error);
+      throw new Error(`Failed to verify accounts: ${error.message}`);
+    }
+    
+    // Create LogicSig from the stored compiled program
+    console.log("Creating LogicSig from stored compiled program");
+    const logicSig = new algosdk.LogicSigAccount(
+      new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+    );
+    
+    // Verify the generated address matches the expected escrow address
+    const generatedAddress = logicSig.address();
+    if (algosdk.encodeAddress(generatedAddress.publicKey) !== validatedEscrow) {
+      console.error(`Generated address (${algosdk.encodeAddress(generatedAddress.publicKey)}) does not match expected escrow address (${validatedEscrow})`);
+      throw new Error("Generated logic signature address does not match stored escrow address");
+    }
+    
+    // Get transaction parameters
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    
+    // Create ASA transfer transaction
+    console.log(`Creating transaction to send ${amount} USDC from ${validatedEscrow} to ${validatedRecipient}`);
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedEscrow,
+      receiver: validatedRecipient,
+      amount: amount * 1_000_000, // Convert USDC amount to microUSDC (assuming 6 decimals)
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams,
+    });
+    
+    // Sign transaction with LogicSig
+    console.log("Signing transaction with LogicSig");
+    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSig);
+    
+    // Submit transaction
+    console.log("Submitting claim transaction");
+    try {
+      const txResponse = await algodClient.sendRawTransaction(signedTxn.blob).do();
+      console.log(`Transaction submitted successfully with ID: ${txResponse.txId}`);
+      
+      // Wait for confirmation
+      await algokit.waitForConfirmation(txResponse.txId, algodClient);
+      console.log(`Transaction ${txResponse.txId} confirmed`);
+      
+      return txResponse.txId;
+    } catch (error) {
+      console.error("Error submitting transaction:", error);
+      throw new Error(`Failed to submit claim transaction: ${error.message}`);
+    }
+  } catch (error) {
+    console.error("Error in claim process:", error);
+    throw new Error(`Failed to claim from escrow: ${error.message}`);
+  }
+}
+
 export async function getUserBalance(address: string): Promise<number> {
   try {
     // Validate address
