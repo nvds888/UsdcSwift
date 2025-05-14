@@ -331,33 +331,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
       
       try {
-        // Generate a real claim transaction using the claimFromEscrow function
-        // This creates a transaction to transfer USDC from the escrow to the recipient
-        const { transaction: claimTxn, logicSignature } = await claimFromEscrow({
+        // Execute the claim transaction directly on the server
+        // This handles everything: creating the transaction, signing with LogicSig, and submitting
+        const txId = await claimFromEscrow({
           escrowAddress: transaction.smartContractAddress,
           recipientAddress: validatedData.recipientAddress,
           amount: parseFloat(transaction.amount),
           claimToken: validatedData.claimToken
         });
         
-        // Convert transaction to base64 for the frontend to sign
-        const encodedTxn = Buffer.from(algosdk.encodeUnsignedTransaction(claimTxn)).toString('base64');
+        console.log(`Claim transaction successful with txId: ${txId}`);
         
-        // Prepare transaction parameters for the frontend
-        const txParams = {
-          txnBase64: encodedTxn,
-          escrowAddress: transaction.smartContractAddress,
-          recipientAddress: validatedData.recipientAddress,
-          claimToken: validatedData.claimToken,
-          amount: parseFloat(transaction.amount)
-        };
-        
-        // Note: We don't mark the transaction as claimed yet
-        // This will happen after the transaction is signed and submitted
+        // Update transaction as claimed
+        const updatedTransaction = await storage.markTransactionAsClaimed(
+          transaction.id,
+          validatedData.recipientAddress,
+          txId
+        );
         
         return res.json({
-          ...transaction,
-          txParams
+          ...updatedTransaction,
+          transactionId: txId,
+          success: true
         });
       } catch (txError) {
         console.error("Error creating claim transaction:", txError);

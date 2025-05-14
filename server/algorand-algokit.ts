@@ -581,8 +581,10 @@ export async function submitSignedTransaction(
   }
 }
 
+
 /**
- * Claims USDC from an escrow account
+ * Claims USDC from an escrow account by creating and signing a transaction
+ * with the escrow's logic signature
  */
 export async function claimFromEscrow(
   params: {
@@ -592,11 +594,7 @@ export async function claimFromEscrow(
     claimToken: string;
     tealSource?: string;
   },
-): Promise<{ 
-  transaction: algosdk.Transaction; 
-  logicSignature: algosdk.LogicSigAccount;
-  transactionId?: string; 
-}> {
+): Promise<string> {
   try {
     const {
       escrowAddress,
@@ -655,12 +653,21 @@ export async function claimFromEscrow(
       suggestedParams: txParams,
     });
 
-    // Return the unsigned transaction and logicSig
-    // The caller will handle signing and submitting
-    return {
-      transaction: txn,
-      logicSignature: logicSignature
-    };
+    // Sign the transaction with the logic signature (escrow account)
+    console.log("Signing transaction with logic signature");
+    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+    
+    // Submit the transaction to the network
+    console.log("Submitting signed transaction to Algorand network");
+    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    
+    // Wait for confirmation
+    const transactionId = extractTransactionId(response);
+    console.log(`Waiting for confirmation of transaction: ${transactionId}`);
+    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+    console.log(`Transaction confirmed: ${transactionId}`);
+    
+    return transactionId;
   } catch (error) {
     console.error("Error preparing claim from escrow account:", error);
     throw new Error("Failed to prepare claim from escrow account");
