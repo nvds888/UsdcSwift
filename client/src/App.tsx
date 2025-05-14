@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import { WalletProvider, WalletManager, WalletId, NetworkId } from "@txnlab/use-wallet-react";
 import NotFound from "@/pages/not-found";
 import SendFlow from "@/pages/SendFlow";
+import SendFlowNew from "@/pages/SendFlowNew";
 import ClaimPage from "@/pages/ClaimPage";
 import Transactions from "@/pages/Transactions";
 import Header from "@/components/Header";
@@ -26,11 +27,12 @@ function Router() {
     <div className="min-h-screen flex flex-col">
       <Header />
       <Switch>
-        <Route path="/" component={SendFlow} />
-        <Route path="/send" component={SendFlow} />
+        <Route path="/" component={SendFlowNew} />
+        <Route path="/send" component={SendFlowNew} />
+        <Route path="/send-old" component={SendFlow} />
         <Route path="/claim/:token" component={ClaimPage} />
         <Route path="/transactions" component={Transactions} />
-        <Route path="/connect" component={SendFlow} />
+        <Route path="/connect" component={SendFlowNew} />
         <Route component={NotFound} />
       </Switch>
       <Footer />
