@@ -353,46 +353,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Transaction data incomplete - missing compiled program" });
         }
         
-        // Variable to store transaction ID
         let txId: string;
         
         try {
-          // First attempt - with opt-in checks
-          console.log("Attempting claim with opt-in verification...");
+          console.log("Attempting claim transaction...");
           txId = await claimFromEscrowWithCompiledTeal({
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.recipientAddress,
             amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram,
-            skipOptInCheck: false
+            compiledTealProgram: transaction.compiledTealProgram
           });
           console.log(`Claim successful with txId: ${txId}`);
-        } catch (optInError: any) {
-          // If this fails due to opt-in check, try again bypassing the check
-          if (optInError.message && optInError.message.toLowerCase().includes("opt")) {
-            console.log("Opt-in check failed, attempting claim without verification");
-            try {
-              // Second attempt - skip opt-in verification
-              txId = await claimFromEscrowWithCompiledTeal({
-                escrowAddress: transaction.smartContractAddress,
-                recipientAddress: validatedData.recipientAddress,
-                amount: parseFloat(transaction.amount),
-                compiledTealProgram: transaction.compiledTealProgram,
-                skipOptInCheck: true
-              });
-              console.log(`Claim successful with opt-in bypass, txId: ${txId}`);
-            } catch (secondError: any) {
-              console.error("Error on second claim attempt:", secondError);
-              throw secondError;
-            }
-          } else {
-            // Not an opt-in error, rethrow
-            throw optInError;
+        } catch (error: any) {
+          console.error("Claim transaction error:", error);
+          
+          // Check if this is our specific USDC_OPT_IN_REQUIRED error
+          if (error.message === "USDC_OPT_IN_REQUIRED") {
+            return res.status(400).json({
+              message: "Recipient not opted in to USDC",
+              requiresOptIn: true,
+              assetId: USDC_ASSET_ID
+            });
           }
-        }
-        
-        if (!txId) {
-          throw new Error("Transaction ID was not generated");
+          
+          // Otherwise, pass the error through
+          throw error;
         }
         
         console.log(`Claim transaction successful with txId: ${txId}`);
@@ -549,42 +534,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let txId: string;
         
         try {
-          // First attempt - with opt-in checks
-          console.log("Attempting reclaim with opt-in verification...");
+          console.log("Attempting reclaim transaction...");
           txId = await claimFromEscrowWithCompiledTeal({
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.senderAddress,
             amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram,
-            skipOptInCheck: false
+            compiledTealProgram: transaction.compiledTealProgram
           });
           console.log(`Reclaim successful with txId: ${txId}`);
-        } catch (optInError: any) {
-          // If this fails due to opt-in check, try again bypassing the check
-          if (optInError.message && optInError.message.toLowerCase().includes("opt")) {
-            console.log("Opt-in check failed, attempting reclaim without verification");
-            try {
-              // Second attempt - skip opt-in verification
-              txId = await claimFromEscrowWithCompiledTeal({
-                escrowAddress: transaction.smartContractAddress,
-                recipientAddress: validatedData.senderAddress,
-                amount: parseFloat(transaction.amount),
-                compiledTealProgram: transaction.compiledTealProgram,
-                skipOptInCheck: true
-              });
-              console.log(`Reclaim successful with opt-in bypass, txId: ${txId}`);
-            } catch (secondError: any) {
-              console.error("Error on second reclaim attempt:", secondError);
-              throw secondError;
-            }
-          } else {
-            // Not an opt-in error, rethrow
-            throw optInError;
+        } catch (error: any) {
+          console.error("Reclaim transaction error:", error);
+          
+          // Check if this is our specific USDC_OPT_IN_REQUIRED error
+          if (error.message === "USDC_OPT_IN_REQUIRED") {
+            return res.status(400).json({
+              message: "Sender not opted in to USDC",
+              requiresOptIn: true,
+              assetId: USDC_ASSET_ID
+            });
           }
-        }
-        
-        if (!txId) {
-          throw new Error("Transaction ID was not generated");
+          
+          // Otherwise, pass the error through
+          throw error;
         }
         
         console.log(`Reclaim transaction successful with txId: ${txId}`);

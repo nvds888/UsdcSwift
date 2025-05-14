@@ -1060,27 +1060,32 @@ export async function claimFromEscrowWithCompiledTeal({
     const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
     
     // Verify that the recipient account exists and has opted into USDC
-    if (!skipOptInCheck) {
-      try {
-        const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
-        const assets = accountInfo.assets || [];
-        
-        // Check if recipient has opted into USDC using our helper function
-        console.log(`Checking if recipient ${validatedRecipient} has opted into USDC...`);
-        const hasOptedIn = assets.some(isUsdcAsset);
-        
-        if (!hasOptedIn) {
-          console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
-          throw new Error("Recipient has not opted into USDC. They must opt in to the USDC asset first.");
-        }
-        
-        console.log(`Recipient ${validatedRecipient} has opted into USDC`);
-      } catch (error: any) {
-        console.error("Error checking accounts:", error);
-        throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
+    try {
+      const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
+      const assets = accountInfo.assets || [];
+      
+      // Check if recipient has opted into USDC using our helper function
+      console.log(`Checking if recipient ${validatedRecipient} has opted into USDC...`);
+      const hasOptedIn = assets.some(isUsdcAsset);
+      
+      if (!hasOptedIn) {
+        console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
+        // Use a specific error type that can be caught and handled properly in the API
+        const error = new Error("USDC_OPT_IN_REQUIRED");
+        (error as any).requiresOptIn = true;
+        (error as any).assetId = USDC_ASSET_ID;
+        throw error;
       }
-    } else {
-      console.log("Skipping opt-in verification as requested");
+      
+      console.log(`Recipient ${validatedRecipient} has opted into USDC`);
+    } catch (error: any) {
+      // If it's our specific opt-in error, rethrow it as is
+      if (error.message === "USDC_OPT_IN_REQUIRED") {
+        throw error;
+      }
+      
+      console.error("Error checking accounts:", error);
+      throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
     }
     
     // Create LogicSig from the stored compiled program
