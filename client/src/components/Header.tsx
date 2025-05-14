@@ -2,7 +2,6 @@ import React from "react";
 import { Link } from "wouter";
 import { Send } from "lucide-react";
 import ConnectWallet from "@/components/ConnectWallet";
-import { AssetConfig } from "@/components/AssetConfig";
 
 const Header: React.FC = () => {
   return (
@@ -19,7 +18,6 @@ const Header: React.FC = () => {
         
         <div className="flex items-center space-x-4">
           <ConnectWallet />
-          <AssetConfig />
         </div>
       </div>
     </header>
