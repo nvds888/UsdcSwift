@@ -126,25 +126,33 @@ export async function optInEscrowToUSDC(
     
     // Use the account directly from logicSignature to avoid address conversion issues
     const escrAccount = logicSignature.address();
-    console.log("Using escrow account from logic signature:", escrAccount);
     
-    // Create opt-in transaction (0 amount transfer to self)
-    // Let's look at the algosdk source to see what parameter type it expects
-    console.log("Type checking: escrowAddress is", typeof escrowAddress);
+    // Ensure we have a string address from the escrow logic signature
+    // Some algosdk versions return an Address object which needs conversion
+    let escrowAddressStr = escrowAddress;
+    if (typeof escrAccount === 'object' && escrAccount !== null) {
+      try {
+        if ('publicKey' in escrAccount) {
+          escrowAddressStr = algosdk.encodeAddress(escrAccount.publicKey);
+          console.log("Converted escrow address to string:", escrowAddressStr);
+        }
+      } catch (err) {
+        console.log("Error converting address:", err);
+      }
+    }
+    
+    console.log("Using escrow account address:", escrowAddressStr);
     
     // The SDK expects a string for the address parameters
-    if (!escrowAddress || typeof escrowAddress !== 'string') {
-      throw new Error(`Invalid escrow address format: ${escrowAddress} (type: ${typeof escrowAddress})`);
+    if (!escrowAddressStr || typeof escrowAddressStr !== 'string') {
+      throw new Error(`Invalid escrow address format: ${escrowAddressStr} (type: ${typeof escrowAddressStr})`);
     }
     
     // Create the opt-in transaction
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: escrowAddress,
-      to: escrowAddress,
-      closeRemainderTo: undefined,
-      revocationTarget: undefined,
+      from: escrowAddressStr,
+      to: escrowAddressStr,
       amount: 0,
-      note: undefined,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params
     });
@@ -280,7 +288,15 @@ export async function prepareCompleteEscrowDeployment(
     const params = await algodClient.getTransactionParams().do();
     
     // Make sure we extract the correct fields
-    console.log("Suggested params:", JSON.stringify(params, null, 2));
+    // Handle BigInt serialization - convert any BigInt values to Number or String
+    const safeParams = { ...params };
+    for (const key in safeParams) {
+      if (typeof safeParams[key] === 'bigint') {
+        safeParams[key] = Number(safeParams[key]);
+      }
+    }
+    
+    console.log("Suggested params:", JSON.stringify(safeParams, null, 2));
     
     // Minimum balance required for accounts with 1 asset (200,000 microALGO = 0.2 ALGO)
     const minBalance = 200000;
