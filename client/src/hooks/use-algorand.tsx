@@ -52,12 +52,94 @@ export function useAlgorand() {
   // Helper function to sign and submit multiple transactions
   const signAndSubmitMultipleTransactions = async (
     txnsBase64: string[],
-    transactionId: number
+    transactionId: number,
+    allTxnsBase64?: string[] // The complete transaction group including pre-signed txns
   ): Promise<boolean> => {
     if (!activeAccount) return false;
     
     try {
-      console.log(`Signing ${txnsBase64.length} transactions`);
+      // Use a different approach depending on whether we have a complete transaction group
+      if (allTxnsBase64 && allTxnsBase64.length > 0) {
+        console.log(`Using atomic transaction group with ${allTxnsBase64.length} total transactions`);
+        return await signAndSubmitAtomicGroup(txnsBase64, allTxnsBase64, transactionId);
+      } else {
+        console.log(`Signing ${txnsBase64.length} individual transactions`);
+        return await signAndSubmitIndividualTransactions(txnsBase64, transactionId);
+      }
+    } catch (error) {
+      console.error("Error in transaction signing/submission:", error);
+      return false;
+    }
+  };
+  
+  // Sign and submit transactions as part of an atomic group
+  const signAndSubmitAtomicGroup = async (
+    txnsToSign: string[],
+    allTxns: string[],
+    transactionId: number
+  ): Promise<boolean> => {
+    try {
+      console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
+      
+      // Decode all transactions in the group (signed and unsigned)
+      const allDecodedTxns = allTxns.map(txn => 
+        new Uint8Array(Buffer.from(txn, 'base64'))
+      );
+      
+      // Create an array of indices that need to be signed by this wallet
+      // Typically these would be the 1st and 3rd transaction (0 and 2)
+      const indexesToSign: number[] = [];
+      txnsToSign.forEach(txnToSign => {
+        const txnBase64 = Buffer.from(txnToSign).toString('base64');
+        const index = allTxns.findIndex(groupTxn => groupTxn === txnBase64);
+        if (index !== -1) {
+          indexesToSign.push(index);
+        }
+      });
+      
+      console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
+      
+      // Sign the transactions with the wallet
+      const signedTxns = await signTransactions(allDecodedTxns, indexesToSign);
+      
+      if (!signedTxns || signedTxns.some((txn, i) => i === 0 && !txn)) {
+        console.error("Failed to sign transactions properly");
+        return false;
+      }
+      
+      // For atomic groups, we only need to submit the first transaction
+      // The rest are handled automatically by the node
+      const firstSignedTxn = signedTxns[0];
+      if (!firstSignedTxn) {
+        console.error("First transaction was not signed properly");
+        return false;
+      }
+      
+      // Submit the signed transaction
+      const response = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: Buffer.from(firstSignedTxn).toString('base64'),
+        transactionId
+      });
+      
+      if (!response.ok) {
+        console.error("Failed to submit signed transaction");
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Error in atomic transaction group signing:", error);
+      return false;
+    }
+  };
+  
+  // Fall back to signing individual transactions
+  const signAndSubmitIndividualTransactions = async (
+    txnsBase64: string[],
+    transactionId: number
+  ): Promise<boolean> => {
+    try {
+      console.log(`Signing ${txnsBase64.length} individual transactions`);
       
       // Convert base64 strings to Uint8Array transactions
       const decodedTxns = txnsBase64.map(txnBase64 => 
@@ -77,6 +159,12 @@ export function useAlgorand() {
         }
       } catch (walletError) {
         console.error("[Wallet] Error signing transactions:", walletError);
+        return false;
+      }
+      
+      // Handle potential null value in the signed transactions
+      if (!signedTxns[0]) {
+        console.error("First transaction was not signed properly");
         return false;
       }
       
@@ -122,10 +210,23 @@ export function useAlgorand() {
         if (data.txParams.txnsBase64 && data.txParams.txnsBase64.length > 0) {
           // New atomic transaction format
           console.log("Using atomic transaction format");
-          success = await signAndSubmitMultipleTransactions(
-            data.txParams.txnsBase64,
-            data.id
-          );
+          
+          // Check if we have the full transaction group (including pre-signed txns)
+          if (data.txParams.allTxnsBase64 && data.txParams.allTxnsBase64.length > 0) {
+            console.log("Processing complete atomic transaction group");
+            success = await signAndSubmitMultipleTransactions(
+              data.txParams.txnsBase64,
+              data.id,
+              data.txParams.allTxnsBase64
+            );
+          } else {
+            // Fallback to old method if allTxnsBase64 is not provided
+            console.log("Using legacy multi-transaction format without group");
+            success = await signAndSubmitMultipleTransactions(
+              data.txParams.txnsBase64,
+              data.id
+            );
+          }
         } else if (data.txParams.txnBase64) {
           // Legacy single transaction format
           console.log("Using legacy transaction format");

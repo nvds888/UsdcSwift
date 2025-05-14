@@ -253,6 +253,7 @@ export async function prepareCompleteEscrowDeployment(
   amount: number,
 ): Promise<{
   unsignedTxns: Uint8Array[];
+  allTransactions: Uint8Array[];
   escrowAddress: string;
   logicSignature: algosdk.LogicSigAccount;
 }> {
