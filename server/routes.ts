@@ -337,7 +337,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           escrowAddress: transaction.smartContractAddress,
           recipientAddress: validatedData.recipientAddress,
           amount: parseFloat(transaction.amount),
-          claimToken: validatedData.claimToken
+          claimToken: validatedData.claimToken,
+          senderAddress: transaction.senderAddress // Pass the original sender address for authorization
         });
         
         console.log(`Claim transaction successful with txId: ${txId}`);

@@ -580,38 +580,56 @@ export async function claimFromEscrow(
     recipientAddress: string;
     amount: number;
     claimToken: string;
-    tealSource?: string;
+    senderAddress: string; // Original sender address (required for authorization)
   },
 ): Promise<string> {
   try {
-    const { escrowAddress, recipientAddress, amount, claimToken, tealSource } = params;
+    const { escrowAddress, recipientAddress, amount, claimToken, senderAddress } = params;
 
     // Validate addresses
     const validatedEscrow = ensureAddressString(escrowAddress);
     const validatedReceiver = ensureAddressString(recipientAddress);
+    const validatedSender = ensureAddressString(senderAddress);
 
     console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
+    console.log(`Original sender address: ${validatedSender}`);
     
-    // Create TEAL program for the escrow
-    // We'll use a much simpler program that only checks asset ID
-    const simpleProgram = `#pragma version 6
-// Check if transaction type is AssetTransfer
-txn TypeEnum
-int 4
-==
-// Check if the asset ID is USDC
-txn XferAsset
-int ${USDC_ASSET_ID}
-==
-&&
-// If both conditions are true, approve
-`;
-
+    try {
+      // Get escrow account info to verify it exists and has USDC
+      const escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
+      
+      if (!escrowInfo) {
+        throw new Error(`Escrow account not found: ${validatedEscrow}`);
+      }
+      
+      // Check if escrow has USDC opted in
+      const assets = escrowInfo.assets || [];
+      const usdcAsset = assets.find((asset: any) => asset['asset-id'] === USDC_ASSET_ID);
+      
+      if (!usdcAsset) {
+        throw new Error(`Escrow account ${validatedEscrow} is not opted into USDC`);
+      }
+      
+      const usdcBalance = Number(usdcAsset.amount || 0);
+      console.log(`Escrow USDC balance: ${usdcBalance / 1_000_000} USDC`);
+      
+      if (usdcBalance < amount * 1_000_000) {
+        throw new Error(`Insufficient USDC in escrow: has ${usdcBalance / 1_000_000}, needs ${amount}`);
+      }
+    } catch (error: any) {
+      console.error("Error checking escrow account:", error);
+      throw new Error(`Failed to verify escrow account: ${error.message}`);
+    }
+    
+    // Create TEAL program for the escrow with the correct sender authorization
+    // This matches what was used when the escrow was created and funded
+    const tealSource = createEscrowTEAL(validatedSender);
+    
     // Compile the TEAL program
     console.log("Compiling TEAL program for escrow");
     let compiledProgram;
     try {
-      compiledProgram = await algodClient.compile(simpleProgram).do();
+      compiledProgram = await algodClient.compile(tealSource).do();
     } catch (error: any) {
       console.error("Error compiling TEAL program:", error);
       throw new Error(`Failed to compile escrow TEAL program: ${error.message}`);
@@ -623,8 +641,62 @@ int ${USDC_ASSET_ID}
 
     // Create LogicSigAccount
     console.log("Creating LogicSigAccount");
-    const logicSignature = new algosdk.LogicSigAccount(programBytes);
+    let logicSignature = new algosdk.LogicSigAccount(programBytes);
     
+    // Verify the generated logic sig address matches the escrow
+    let generatedAddress = logicSignature.address();
+    console.log(`Generated escrow address: ${generatedAddress}, expected: ${validatedEscrow}`);
+    
+    if (generatedAddress !== validatedEscrow) {
+      console.log(`Warning: Generated escrow address doesn't match expected address`);
+      
+      // Try a few different salts to see if we can match the escrow address
+      let foundMatch = false;
+      for (let i = 0; i < 5; i++) {
+        const salt = `salt-${i}`;
+        const altTealSource = createEscrowTEAL(validatedSender, salt);
+        
+        try {
+          const altCompiledProgram = await algodClient.compile(altTealSource).do();
+          const altProgramBytes = new Uint8Array(
+            Buffer.from(altCompiledProgram.result, "base64"),
+          );
+          
+          const altLogicSignature = new algosdk.LogicSigAccount(altProgramBytes);
+          const altAddress = altLogicSignature.address();
+          
+          console.log(`Trying alternate salt "${salt}": generated address ${altAddress}`);
+          
+          if (algosdk.encodeAddress(altLogicSignature.address().publicKey) === validatedEscrow) {
+            console.log(`Found matching salt "${salt}" for escrow address!`);
+            logicSignature = altLogicSignature;
+            generatedAddress = altAddress;
+            foundMatch = true;
+            break;
+          }
+        } catch (error) {
+          console.error(`Error with alternate salt "${salt}":`, error);
+        }
+      }
+      
+      if (!foundMatch) {
+        console.log("Could not find matching salt, will try using the escrow address itself as authorization");
+        // As a last resort, try using the escrow address itself as the authorization source
+        const lastResortSource = createEscrowTEAL(validatedEscrow);
+        try {
+          const lastResortCompiled = await algodClient.compile(lastResortSource).do();
+          const lastResortBytes = new Uint8Array(
+            Buffer.from(lastResortCompiled.result, "base64"),
+          );
+          const lastResortLogicSig = new algosdk.LogicSigAccount(lastResortBytes);
+          logicSignature = lastResortLogicSig;
+          console.log("Using last resort LogicSig");
+        } catch (error) {
+          console.error("Error with last resort method:", error);
+        }
+      }
+    }
+
     // Get transaction parameters
     const txParams = await algodClient.getTransactionParams().do();
     console.log("Got network parameters for claim");
@@ -702,7 +774,6 @@ export async function executeClaimTransaction(
  */
 export async function reclaimFromEscrow(
   escrowAddress: string,
-  logicSignature: algosdk.LogicSigAccount,
   senderAddress: string,
   amount: number,
 ): Promise<string> {
@@ -710,6 +781,111 @@ export async function reclaimFromEscrow(
     // Validate addresses
     const validatedEscrow = ensureAddressString(escrowAddress);
     const validatedSender = ensureAddressString(senderAddress);
+
+    console.log(`Preparing to reclaim from escrow: ${validatedEscrow} to ${validatedSender}`);
+    
+    try {
+      // Get escrow account info to verify it exists and has USDC
+      const escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
+      
+      if (!escrowInfo) {
+        throw new Error(`Escrow account not found: ${validatedEscrow}`);
+      }
+      
+      // Check if escrow has USDC opted in
+      const assets = escrowInfo.assets || [];
+      const usdcAsset = assets.find((asset: any) => asset['asset-id'] === USDC_ASSET_ID);
+      
+      if (!usdcAsset) {
+        throw new Error(`Escrow account ${validatedEscrow} is not opted into USDC`);
+      }
+      
+      const usdcBalance = Number(usdcAsset.amount || 0);
+      console.log(`Escrow USDC balance: ${usdcBalance / 1_000_000} USDC`);
+      
+      if (usdcBalance < amount * 1_000_000) {
+        throw new Error(`Insufficient USDC in escrow: has ${usdcBalance / 1_000_000}, needs ${amount}`);
+      }
+    } catch (error: any) {
+      console.error("Error checking escrow account:", error);
+      throw new Error(`Failed to verify escrow account: ${error.message}`);
+    }
+    
+    // Create TEAL program for the escrow with the correct sender authorization
+    // This must match what was used when the escrow was created and funded
+    const tealSource = createEscrowTEAL(validatedSender);
+    
+    // Compile the TEAL program
+    console.log("Compiling TEAL program for escrow reclaim");
+    let compiledProgram;
+    try {
+      compiledProgram = await algodClient.compile(tealSource).do();
+    } catch (error: any) {
+      console.error("Error compiling TEAL program:", error);
+      throw new Error(`Failed to compile escrow TEAL program: ${error.message}`);
+    }
+    
+    const programBytes = new Uint8Array(
+      Buffer.from(compiledProgram.result, "base64"),
+    );
+
+    // Create LogicSigAccount
+    console.log("Creating LogicSigAccount for reclaim");
+    let logicSignature = new algosdk.LogicSigAccount(programBytes);
+    
+    // Verify the generated logic sig address matches the escrow
+    let generatedAddress = algosdk.encodeAddress(logicSignature.address().publicKey);
+    console.log(`Generated escrow address: ${generatedAddress}, expected: ${validatedEscrow}`);
+    
+    if (generatedAddress !== validatedEscrow) {
+      console.log(`Warning: Generated escrow address doesn't match expected address`);
+      
+      // Try a few different salts to see if we can match the escrow address
+      let foundMatch = false;
+      for (let i = 0; i < 5; i++) {
+        const salt = `salt-${i}`;
+        const altTealSource = createEscrowTEAL(validatedSender, salt);
+        
+        try {
+          const altCompiledProgram = await algodClient.compile(altTealSource).do();
+          const altProgramBytes = new Uint8Array(
+            Buffer.from(altCompiledProgram.result, "base64"),
+          );
+          
+          const altLogicSignature = new algosdk.LogicSigAccount(altProgramBytes);
+          const altAddress = algosdk.encodeAddress(altLogicSignature.address().publicKey);
+          
+          console.log(`Trying alternate salt "${salt}": generated address ${altAddress}`);
+          
+          if (altAddress === validatedEscrow) {
+            console.log(`Found matching salt "${salt}" for escrow address!`);
+            logicSignature = altLogicSignature;
+            generatedAddress = altAddress;
+            foundMatch = true;
+            break;
+          }
+        } catch (error) {
+          console.error(`Error with alternate salt "${salt}":`, error);
+        }
+      }
+      
+      if (!foundMatch) {
+        console.log("Could not find matching salt, will try using the escrow address itself as authorization");
+        // As a last resort, try using the escrow address itself as the authorization source
+        const lastResortSource = createEscrowTEAL(validatedEscrow);
+        try {
+          const lastResortCompiled = await algodClient.compile(lastResortSource).do();
+          const lastResortBytes = new Uint8Array(
+            Buffer.from(lastResortCompiled.result, "base64"),
+          );
+          const lastResortLogicSig = new algosdk.LogicSigAccount(lastResortBytes);
+          logicSignature = lastResortLogicSig;
+          console.log("Using last resort LogicSig");
+        } catch (error) {
+          console.error("Error with last resort method:", error);
+        }
+      }
+    }
 
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
@@ -724,27 +900,36 @@ export async function reclaimFromEscrow(
       `Creating reclaim transaction: from=${validatedEscrow} to=${validatedSender}`,
     );
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: validatedEscrow,         // Correct: 'sender' not 'from'
-      receiver: validatedSender,       // Correct: 'receiver' not 'to'
+      sender: validatedEscrow,
+      receiver: validatedSender,
       amount: microAmount,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params,
     });
 
     // Sign transaction with logic signature
+    console.log("Signing reclaim transaction with logic signature");
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
 
     // Submit transaction to network
-    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
-
-    // Wait for confirmation
-    const transactionId = extractTransactionId(response);
-    await algosdk.waitForConfirmation(algodClient, transactionId, 5);
-
-    return transactionId;
-  } catch (error) {
-    console.error("Error reclaiming from escrow account:", error);
-    throw new Error("Failed to reclaim from escrow account");
+    console.log("Submitting reclaim transaction to Algorand network");
+    try {
+      const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+      
+      // Wait for confirmation
+      const transactionId = extractTransactionId(response);
+      console.log(`Waiting for confirmation of reclaim transaction: ${transactionId}`);
+      await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+      console.log(`Reclaim transaction confirmed: ${transactionId}`);
+      
+      return transactionId;
+    } catch (error: any) {
+      console.error("Error submitting reclaim transaction:", error);
+      throw new Error(`Failed to submit reclaim transaction: ${error.message || JSON.stringify(error)}`);
+    }
+  } catch (error: any) {
+    console.error("Error in reclaim process:", error);
+    throw new Error(`Failed to reclaim from escrow: ${error.message}`);
   }
 }
 
