@@ -11,6 +11,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@algorandfoundation/algokit-utils": "^9.1.0",
     "@blockshake/defly-connect": "^1.2.1",
     "@defillama/sdk": "^5.0.136",
     "@hookform/resolvers": "^3.10.0",

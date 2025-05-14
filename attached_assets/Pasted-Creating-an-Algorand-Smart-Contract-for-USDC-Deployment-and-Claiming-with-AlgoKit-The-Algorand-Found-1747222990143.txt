@@ -1,0 +1,244 @@
+Creating an Algorand Smart Contract for USDC Deployment and Claiming with AlgoKit
+The Algorand Foundation has launched AlgoKit 3.0, its most advanced and user-friendly developer toolkit yet, bringing game-changing enhancements that redefine how developers build on Algorand's high-performance blockchain. Welcome to Algorand AlgoKit 3.0 includes all the tools and open-source resources you need to unleash the power and performance of the Algorand blockchain to build decentralized apps. Build your app on blockchain with AlgoKit
+Prerequisites
+
+Install AlgoKit: To install AlgoKit, run the following command from a terminal. AlgoKit Quick Start Guide - Algorand Developer Portal
+bashpipx install algokit
+
+Set up development environment: You'll need Docker installed for running Algorand LocalNet
+
+Setting Up the Project
+This will launch a guided menu system to create a specific project tailored to your needs. You will first be prompted to select a specific template. AlgoKit Quick Start Guide - Algorand Developer Portal
+bashalgokit init
+Choose the appropriate template:
+
+For Python development: algokit-python-template - Official AlgoKit's Algorand Python template provides a production-ready baseline for developing and deploying smart contracts in Python. GitHub - algorandfoundation/algokit-typescript-template: Official AlgoKit template for smart contract development project using Algorand TypeScript.
+For TypeScript development: algokit-typescript-template - Official AlgoKit's Algorand TypeScript template provides a production-ready baseline for developing and deploying smart contracts in TypeScript. GitHubAlgorand
+
+USDC Smart Contract Implementation
+Circle launched USDC on Algorand in 2020. As of March 2025, there's over $100 million USDC in circulation on Algorand. How to Get USDC on Algorand: A Step-by-Step Guide Each blockchain has its own way of managing digital assets. Algorand uses something called Algorand Standard Assets (ASA) to create and manage tokens, including USDC. How to Get USDC on Algorand: A Step-by-Step Guide
+Python Implementation using Algorand Python
+Here's the smart contract structure for USDC deposit and claim functionality:
+pythonfrom algopy import (
+    Application,
+    ARC4Contract,
+    Global,
+    Local,
+    Transaction,
+    InnerTransaction,
+    TxnField,
+    op,
+    UInt64,
+    Bytes,
+    Account,
+    Asset,
+    subroutine
+)
+
+class USDCDeposit(ARC4Contract):
+    # Global state
+    usdc_asset_id: UInt64
+    total_deposited: UInt64
+    
+    # Local state per user
+    user_deposited: UInt64
+    user_claimable: UInt64
+    
+    @subroutine
+    def _opt_in_to_asset(self, asset: Asset) -> None:
+        """Opt the contract into the ASA"""
+        InnerTransaction.begin()
+        InnerTransaction.set_fields({
+            TxnField.type_enum: TxnType.AssetTransfer,
+            TxnField.xfer_asset: asset,
+            TxnField.asset_amount: 0,
+            TxnField.asset_receiver: Global.current_application_address,
+        })
+        InnerTransaction.submit()
+    
+    @arc4.abimethod
+    def initialize(self, usdc_asset: Asset) -> None:
+        """Initialize the contract with USDC asset ID"""
+        assert Transaction.sender == Global.creator_address, "Only creator can initialize"
+        self.usdc_asset_id = usdc_asset.id
+        self._opt_in_to_asset(usdc_asset)
+    
+    @arc4.abimethod
+    def deposit(self, amount: UInt64, usdc_payment: AssetTransferTransaction) -> None:
+        """Deposit USDC tokens"""
+        # Verify the payment
+        assert usdc_payment.xfer_asset == self.usdc_asset_id, "Wrong asset"
+        assert usdc_payment.asset_amount == amount, "Amount mismatch"
+        assert usdc_payment.asset_receiver == Global.current_application_address, "Wrong receiver"
+        
+        # Update user balance
+        current_balance = self.user_deposited.get(Transaction.sender)
+        self.user_deposited[Transaction.sender] = current_balance + amount
+        
+        # Update global total
+        self.total_deposited += amount
+    
+    @arc4.abimethod
+    def claim(self, amount: UInt64) -> None:
+        """Claim deposited USDC"""
+        sender = Transaction.sender
+        current_balance = self.user_deposited.get(sender)
+        
+        assert current_balance >= amount, "Insufficient balance"
+        
+        # Update balance
+        self.user_deposited[sender] = current_balance - amount
+        self.total_deposited -= amount
+        
+        # Transfer USDC back to user
+        InnerTransaction.begin()
+        InnerTransaction.set_fields({
+            TxnField.type_enum: TxnType.AssetTransfer,
+            TxnField.xfer_asset: self.usdc_asset_id,
+            TxnField.asset_amount: amount,
+            TxnField.asset_receiver: sender,
+        })
+        InnerTransaction.submit()
+TypeScript Implementation
+This landmark release transforms how developers build on Algorand. Enhanced tooling, streamlined workflows, and powerful new capabilities – including support for TypeScript smart contract development – make developing on Algorand more accessible, efficient, and powerful than ever before. Build your app on blockchain with AlgoKit
+typescriptimport { Contract } from '@algorandfoundation/algokit-types';
+
+export class USDCDeposit extends Contract {
+  // Global state
+  usdcAssetId = GlobalStateKey<uint64>({ key: 'usdc_asset' });
+  totalDeposited = GlobalStateKey<uint64>({ key: 'total_deposited' });
+  
+  // Local state
+  userDeposited = LocalStateKey<uint64>({ key: 'user_deposited' });
+  
+  // Initialize the contract
+  @abimethod({ onCreate: 'require' })
+  initialize(usdcAsset: Asset): void {
+    this.usdcAssetId.value = usdcAsset;
+    
+    // Opt-in to USDC
+    sendAssetTransfer({
+      assetReceiver: this.app.address,
+      xferAsset: usdcAsset,
+      assetAmount: 0,
+    });
+  }
+  
+  // Deposit USDC
+  @abimethod()
+  deposit(amount: uint64, usdcPayment: AssetTransferTxn): void {
+    // Verify payment
+    assert(usdcPayment.xferAsset === this.usdcAssetId.value);
+    assert(usdcPayment.assetAmount === amount);
+    assert(usdcPayment.assetReceiver === this.app.address);
+    
+    // Update balances
+    const currentBalance = this.userDeposited(this.txn.sender).value;
+    this.userDeposited(this.txn.sender).value = currentBalance + amount;
+    this.totalDeposited.value = this.totalDeposited.value + amount;
+  }
+  
+  // Claim USDC
+  @abimethod()
+  claim(amount: uint64): void {
+    const currentBalance = this.userDeposited(this.txn.sender).value;
+    assert(currentBalance >= amount);
+    
+    // Update balances
+    this.userDeposited(this.txn.sender).value = currentBalance - amount;
+    this.totalDeposited.value = this.totalDeposited.value - amount;
+    
+    // Transfer USDC back
+    sendAssetTransfer({
+      assetReceiver: this.txn.sender,
+      xferAsset: this.usdcAssetId.value,
+      assetAmount: amount,
+    });
+  }
+}
+Deployment and Interaction
+1. Building the Smart Contract
+This should produce something similar to the following in the VSCode terminal. HelloWorld not found in PDEEWXLITMAPDMDYGP4XUV2EUJVPNZVKR7OUSSFZ63U4XNL2Y25FN5PYN4 account, deploying app. HelloWorld (v1.0) deployed successfully, with app id 1002. AlgoKit Quick Start Guide - Algorand Developer Portal
+bashalgokit project run build
+2. Deploying to LocalNet
+bashalgokit localnet start
+algokit project deploy localnet
+3. Interacting with the Contract
+Create a deployment configuration file (deploy_config.py for Python):
+pythonfrom algokit_utils import (
+    get_algod_client,
+    get_indexer_client,
+    get_default_account,
+    ApplicationClient,
+)
+from algosdk.v2client import algod
+import algosdk
+
+# Get clients
+algod_client = get_algod_client()
+deployer = get_default_account(algod_client)
+
+# Deploy the contract
+app_client = ApplicationClient(
+    algod_client,
+    USDCDeposit(),
+    signer=deployer.signer,
+    sender=deployer.address,
+)
+
+# Deploy
+app_client.create()
+
+# Initialize with USDC asset ID (you'll need to get the actual USDC ASA ID)
+usdc_asset_id = 123456  # Replace with actual USDC ASA ID
+app_client.call(
+    "initialize",
+    usdc_asset=usdc_asset_id,
+)
+
+# Opt user into the app
+app_client.opt_in()
+
+# Deposit USDC (requires atomic transaction group)
+deposit_amount = 1000000  # 1 USDC (6 decimals)
+
+# Create atomic group for deposit
+asset_transfer = algosdk.transaction.AssetTransferTxn(
+    sender=deployer.address,
+    receiver=app_client.app_address,
+    amt=deposit_amount,
+    index=usdc_asset_id,
+    sp=algod_client.suggested_params(),
+)
+
+app_call = app_client.compose_call(
+    "deposit",
+    amount=deposit_amount,
+    usdc_payment=asset_transfer,
+)
+
+# Execute the atomic transaction
+app_client.execute_atc(app_call)
+
+# Claim USDC
+claim_amount = 500000  # 0.5 USDC
+app_client.call(
+    "claim",
+    amount=claim_amount,
+)
+Key Considerations
+
+Asset Opt-in: Before an account can receive a specific asset it must opt-in to receive it. An opt-in transaction places an asset holding of 0 into the account and increases its minimum balance by 100,000 microAlgos. Algorand Standard Assets (ASAs) - Algorand Developer Portal
+Inner Transactions: Since September 2021 all deployed smart contracts are given their own application account with an associated Algorand public address. These accounts are used by issuing inner transactions from within the smart contract. Overview - Algorand Developer Portal
+Atomic Transfers: Atomic Transfers: implements a group of transactions that force the simultaneous interaction between the Stateful and Sateless components ASA Recurring Withdrawal DApp | Algorand Developer Portal
+Minimum Balance: For every asset an account creates or owns, its minimum balance is increased by 0.1 Algos (100,000 microAlgos). Algorand Standard Assets (ASAs) - Algorand Developer Portal
+
+Security Considerations
+
+Verify all incoming asset transfers match expected parameters
+Check sender authentication for sensitive operations
+Implement proper access controls for admin functions
+Use atomic transactions to ensure payment and state updates happen together
+Handle edge cases like insufficient balances properly
+
+This implementation provides a foundation for building a USDC deposit and claim system on Algorand using the latest AlgoKit tools and best practices.
