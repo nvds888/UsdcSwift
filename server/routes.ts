@@ -52,13 +52,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get user balance
   app.get("/api/balance", async (req: Request, res: Response) => {
     try {
-      const { address } = req.query;
+      const { address, assetId } = req.query;
       
       if (!address || typeof address !== "string") {
         return res.status(400).json({ message: "Wallet address is required" });
       }
       
-      const balance = await getUserBalance(address);
+      // Pass the custom asset ID if provided
+      const customAssetId = assetId ? parseInt(assetId as string) : undefined;
+      const balance = await getUserBalance(address, customAssetId);
       return res.json({ balance });
     } catch (error) {
       console.error("Error fetching balance:", error);

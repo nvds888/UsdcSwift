@@ -229,22 +229,37 @@ export async function reclaimFromEscrow(
   }
 }
 
-export async function getUserBalance(address: string): Promise<number> {
+export async function getUserBalance(address: string, customAssetId?: number): Promise<number> {
   try {
     // Check if account exists
     const accountInfo = await algodClient.accountInformation(address).do();
     
-    // Look for USDC in assets array
-    const usdcAsset = accountInfo.assets.find(
-      (asset: any) => asset["asset-id"] === USDC_ASSET_ID
-    );
+    // Use custom asset ID if provided, otherwise use default
+    const assetIdToCheck = customAssetId || USDC_ASSET_ID;
     
-    if (!usdcAsset) {
+    // Log the asset ID we're checking
+    console.log(`Looking for asset ID: ${assetIdToCheck} in wallet ${address}`);
+    
+    // Check if assets field exists and has elements
+    if (!accountInfo.assets || accountInfo.assets.length === 0) {
+      console.log("No assets found in account");
       return 0;
     }
     
+    // Look for the specified asset in the assets array
+    const usdcAsset = accountInfo.assets.find(
+      (asset: any) => asset["asset-id"] === assetIdToCheck
+    );
+    
+    if (!usdcAsset) {
+      console.log(`Asset ID ${assetIdToCheck} not found in account`);
+      return 0;
+    }
+    
+    console.log(`Found asset with amount: ${usdcAsset.amount}`);
+    
     // Return the balance converted from micro-USDC
-    return usdcAsset.amount / 1_000_000;
+    return Number(usdcAsset.amount) / 1_000_000;
   } catch (error) {
     console.error("Error getting user balance:", error);
     return 0;
