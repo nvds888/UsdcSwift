@@ -644,7 +644,7 @@ export async function claimFromEscrow(
     let logicSignature = new algosdk.LogicSigAccount(programBytes);
     
     // Verify the generated logic sig address matches the escrow
-    let generatedAddress = logicSignature.address();
+    let generatedAddress = algosdk.encodeAddress(logicSignature.address().publicKey);
     console.log(`Generated escrow address: ${generatedAddress}, expected: ${validatedEscrow}`);
     
     if (generatedAddress !== validatedEscrow) {

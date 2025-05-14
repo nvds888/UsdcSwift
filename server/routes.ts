@@ -464,29 +464,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Funds have already been claimed" });
       }
       
-      // Generate transaction parameters for the frontend to sign
-      // In a production app, we would recreate the escrow logic signature here
-      // and return the transaction parameters for the frontend to sign
-      const txParams = {
-        escrowAddress: transaction.smartContractAddress,
-        senderAddress: validatedData.senderAddress,
-        amount: parseFloat(transaction.amount)
-      };
+      console.log("Preparing reclaim transaction from escrow:", transaction.smartContractAddress);
       
-      // For now, generate a fake transaction ID
-      const txId = `RECLAIM-${uuidv4()}`;
-      
-      // Update transaction as claimed by sender (reclaimed)
-      const updatedTransaction = await storage.markTransactionAsClaimed(
-        transaction.id,
-        validatedData.senderAddress,
-        txId
-      );
-      
-      return res.json({
-        ...updatedTransaction,
-        txParams
-      });
+      try {
+        // Execute the reclaim transaction directly on the server using LogicSig
+        const txId = await reclaimFromEscrow(
+          transaction.smartContractAddress,
+          validatedData.senderAddress,
+          parseFloat(transaction.amount)
+        );
+        
+        console.log(`Reclaim transaction successful with txId: ${txId}`);
+        
+        // Update transaction as claimed by sender (reclaimed)
+        const updatedTransaction = await storage.markTransactionAsClaimed(
+          transaction.id,
+          validatedData.senderAddress,
+          txId
+        );
+        
+        return res.json({
+          ...updatedTransaction,
+          success: true,
+          transactionId: txId
+        });
+      } catch (reclaimError) {
+        console.error("Error executing reclaim transaction:", reclaimError);
+        return res.status(400).json({
+          message: "Failed to execute reclaim transaction",
+          error: reclaimError instanceof Error ? reclaimError.message : String(reclaimError)
+        });
+      }
     } catch (error) {
       console.error("Error reclaiming transaction:", error);
       if (error instanceof z.ZodError) {
