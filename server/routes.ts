@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { 
   createEscrowAccount, 
   prepareFundEscrowTransaction,
+  prepareCompleteEscrowDeployment,
   submitSignedTransaction,
   claimFromEscrow,
   reclaimFromEscrow,
@@ -174,7 +175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let txnsBase64: string[] = [];
       try {
         console.log(`Encoding ${unsignedTxns.length} transactions to base64`);
-        unsignedTxns.forEach((txn, i) => {
+        unsignedTxns.forEach((txn: Uint8Array, i: number) => {
           txnsBase64.push(Buffer.from(txn).toString('base64'));
           console.log(`Encoded transaction ${i+1}`);
         });
