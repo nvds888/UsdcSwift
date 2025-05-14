@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
+import algosdk from "algosdk";
 import {
   sendUsdcSchema,
   claimUsdcSchema,
@@ -11,7 +12,8 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { 
   createEscrowAccount, 
-  fundEscrowAccount, 
+  prepareFundEscrowTransaction,
+  submitSignedTransaction,
   claimFromEscrow,
   reclaimFromEscrow,
   getUserBalance
@@ -64,6 +66,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Submit signed transaction
+  app.post("/api/submit-transaction", async (req: Request, res: Response) => {
+    try {
+      const { signedTxn, transactionId } = req.body;
+      
+      if (!signedTxn || !transactionId) {
+        return res.status(400).json({ message: "Signed transaction and transaction ID are required" });
+      }
+      
+      // Decode the base64 signed transaction
+      const decodedTxn = Buffer.from(signedTxn, "base64");
+      
+      // Submit the signed transaction
+      const txId = await submitSignedTransaction(decodedTxn);
+      
+      // Get transaction from database
+      const transaction = await storage.getTransactionById(parseInt(transactionId));
+      
+      if (!transaction) {
+        return res.status(404).json({ message: "Transaction not found" });
+      }
+      
+      // Update transaction with blockchain transaction ID
+      // In a production app, we would update the database record here
+      // to record the blockchain transaction ID
+      
+      return res.json({
+        success: true,
+        transactionId: txId
+      });
+    } catch (error) {
+      console.error("Error submitting signed transaction:", error);
+      return res.status(500).json({ message: "Failed to submit transaction" });
+    }
+  });
+
   // Create a new transaction (send USDC)
   app.post("/api/send", async (req: Request, res: Response) => {
     try {
@@ -84,9 +122,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         claimToken: claimToken,
       });
       
-      // Generate transaction parameters for the frontend to sign
-      // The frontend will handle the actual transaction signing and submission
+      // Prepare the transaction for the frontend to sign
+      // This creates the actual transaction object that will be signed by the user's wallet
+      const txnParams = await prepareFundEscrowTransaction(
+        validatedData.senderAddress,
+        escrowAddress,
+        parseFloat(validatedData.amount)
+      );
+      
+      // Encode the transaction to base64 for sending to frontend
+      const txnBase64 = Buffer.from(
+        txnParams.txn.toByte()
+      ).toString("base64");
+      
+      // Create transaction parameters for the frontend
       const txParams = {
+        txnBase64,
         senderAddress: validatedData.senderAddress,
         escrowAddress: escrowAddress,
         amount: parseFloat(validatedData.amount)

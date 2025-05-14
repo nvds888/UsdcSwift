@@ -96,11 +96,11 @@ export async function createEscrowAccount(sender: string): Promise<{
   };
 }
 
-export async function fundEscrowAccount(
+export async function prepareFundEscrowTransaction(
   senderAccount: string,
   escrowAddress: string,
   amount: number
-): Promise<string> {
+): Promise<{ txn: algosdk.Transaction; txnId: string; escrowAddress: string }> {
   try {
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
@@ -117,15 +117,33 @@ export async function fundEscrowAccount(
       suggestedParams: params
     });
     
-    // Note: In a real application, this transaction would need to be signed by the sender
-    // This would happen in the frontend with wallet integration
-    // The signed transaction would be sent to the backend
-    // Here we're just returning the transaction ID for demonstration
-    
-    return txn.txID();
+    // Return transaction object, transaction ID, and escrow address
+    // This will be sent to the frontend for signing by the user's wallet
+    return {
+      txn: txn,
+      txnId: txn.txID(),
+      escrowAddress: escrowAddress
+    };
   } catch (error) {
-    console.error("Error funding escrow account:", error);
-    throw new Error("Failed to fund escrow account");
+    console.error("Error preparing escrow funding transaction:", error);
+    throw new Error("Failed to prepare escrow funding transaction");
+  }
+}
+
+export async function submitSignedTransaction(
+  signedTxn: Uint8Array
+): Promise<string> {
+  try {
+    // Submit the signed transaction to the network
+    const { txId } = await algodClient.sendRawTransaction(signedTxn).do();
+    
+    // Wait for confirmation
+    await algosdk.waitForConfirmation(algodClient, txId, 5);
+    
+    return txId;
+  } catch (error) {
+    console.error("Error submitting signed transaction:", error);
+    throw new Error("Failed to submit signed transaction");
   }
 }
 

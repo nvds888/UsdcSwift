@@ -60,6 +60,11 @@ export const reclaimUsdcSchema = z.object({
   senderAddress: z.string().min(1, "Sender address is required"),
 });
 
+export const signedTransactionSchema = z.object({
+  signedTxn: z.string().min(1, "Signed transaction is required"),
+  transactionId: z.number().int().positive(),
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
@@ -68,3 +73,4 @@ export type SendUsdcInput = z.infer<typeof sendUsdcSchema>;
 export type ClaimUsdcInput = z.infer<typeof claimUsdcSchema>;
 export type RegenerateClaimLinkInput = z.infer<typeof regenerateClaimLinkSchema>;
 export type ReclaimUsdcInput = z.infer<typeof reclaimUsdcSchema>;
+export type SignedTransactionInput = z.infer<typeof signedTransactionSchema>;
