@@ -52,7 +52,16 @@ function isUsdcAsset(asset: any): boolean {
         ) 
       : undefined;
   
-  console.log(`Checking asset: ${JSON.stringify(asset, null, 2)}`);
+  try {
+    // Try to stringify the asset but handle BigInt values
+    const assetStr = JSON.stringify(asset, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    , 2);
+    console.log(`Checking asset: ${assetStr}`);
+  } catch (e: any) {
+    console.log(`Checking asset: (cannot stringify - ${e?.message || 'unknown error'})`);
+  }
+  
   console.log(`Asset ID extracted: ${assetId}, comparing to USDC ID: ${USDC_ASSET_ID}`);
   
   // If we couldn't extract an asset ID, log it and return false
@@ -316,7 +325,13 @@ export async function prepareCompleteEscrowDeployment(
       genesisHash: Buffer.from(params.genesisHash).toString('base64')
     };
     
-    console.log("Suggested params:", JSON.stringify(loggableParams, null, 2));
+    try {
+      console.log("Suggested params:", JSON.stringify(loggableParams, (key, value) => 
+        typeof value === 'bigint' ? value.toString() : value
+      , 2));
+    } catch (e: any) {
+      console.log("Suggested params: (cannot stringify - may contain BigInt values)");
+    }
 
     // Minimum balance required for accounts with 1 asset (200,000 microALGO = 0.2 ALGO)
     const minBalance = 300000; // Increased from 200000 to 300000 (0.3 Algo) to ensure sufficient funds for opt-in
@@ -786,7 +801,15 @@ export async function claimFromEscrow(
       return transactionId;
     } catch (error: any) {
       console.error("Error submitting transaction:", error);
-      throw new Error(`Failed to submit claim transaction: ${error.message || JSON.stringify(error)}`);
+      let errorStr: string;
+      try {
+        errorStr = error.message || JSON.stringify(error, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        );
+      } catch (e) {
+        errorStr = "Error object cannot be stringified";
+      }
+      throw new Error(`Failed to submit claim transaction: ${errorStr}`);
     }
   } catch (error: any) {
     console.error("Error in claim process:", error);
