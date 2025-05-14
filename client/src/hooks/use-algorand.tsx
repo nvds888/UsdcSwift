@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useWallet } from "@txnlab/use-wallet-react";
+import { useWallet, SignerTransaction } from "@txnlab/use-wallet-react";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -14,7 +14,7 @@ import {
 } from "@/lib/types";
 
 export function useAlgorand() {
-  const { activeAccount } = useWallet();
+  const { activeAccount, signTransactions } = useWallet();
   const [balance, setBalance] = useState<string>("0.00");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const { toast } = useToast();
@@ -146,6 +146,22 @@ export function useAlgorand() {
       const res = await apiRequest("POST", "/api/regenerate-link", params);
       const data = await res.json();
       
+      // Sign and submit the transaction if we have txParams
+      if (activeAccount && data.txParams && data.txParams.txnBase64) {
+        // Attempt to sign and submit the transaction with the wallet
+        const success = await signAndSubmitTransaction(
+          data.txParams.txnBase64,
+          data.id
+        );
+        
+        if (!success) {
+          toast({
+            title: "Warning",
+            description: "New claim link was generated but transaction was not signed."
+          });
+        }
+      }
+      
       // Invalidate transactions cache
       queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
       
@@ -176,22 +192,20 @@ export function useAlgorand() {
       const res = await apiRequest("POST", "/api/reclaim", params);
       const data = await res.json();
       
-      // In a production app, this would handle the actual transaction signing
-      // using the connected wallet
-      if (activeAccount && data.txParams) {
-        // This would be where we'd sign and submit the transaction
-        // For example:
-        // const algodClient = new algosdk.Algodv2(token, server, port);
-        // const suggestedParams = await algodClient.getTransactionParams().do();
-        // const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-        //   from: data.txParams.escrowAddress,
-        //   to: activeAccount.address,
-        //   amount: Math.floor(data.txParams.amount * 1_000_000), // Convert to microUSDC
-        //   assetIndex: USDC_ASSET_ID,
-        //   suggestedParams
-        // });
-        // const signedTxn = await window.algorand.signTransaction(txn.toByte());
-        // await algodClient.sendRawTransaction(signedTxn).do();
+      // Sign and submit the transaction if we have txParams
+      if (activeAccount && data.txParams && data.txParams.txnBase64) {
+        // Attempt to sign and submit the transaction with the wallet
+        const success = await signAndSubmitTransaction(
+          data.txParams.txnBase64,
+          data.id
+        );
+        
+        if (!success) {
+          toast({
+            title: "Warning",
+            description: "Transaction creation succeeded but signing failed. Please try again."
+          });
+        }
       }
       
       // Invalidate transactions cache
@@ -255,7 +269,9 @@ export function useAlgorand() {
 
   // Sign transaction with wallet and submit
   const signAndSubmitTransaction = async (txnBase64: string, transactionId: number): Promise<boolean> => {
-    if (!activeAccount) {
+    const { activeAccount, signTransactions } = useWallet();
+    
+    if (!activeAccount || !signTransactions) {
       toast({
         title: "Wallet Not Connected",
         description: "Please connect your wallet to sign the transaction",
@@ -267,17 +283,22 @@ export function useAlgorand() {
     try {
       setIsLoading(true);
       
-      // Sign the transaction with the wallet
-      // This is using the txnlab wallet API
-      const signedTxns = await activeAccount.signTxns([txnBase64]);
+      // For @txnlab/use-wallet-react, we need to prepare the transaction for signing
+      const signer: SignerTransaction[] = [{
+        txn: txnBase64,
+        signers: [activeAccount.address]
+      }];
       
-      if (!signedTxns || !signedTxns[0]) {
+      // Sign the transaction with the wallet
+      const signedTransactions = await signTransactions(signer);
+      
+      if (!signedTransactions || signedTransactions.length === 0) {
         throw new Error("Failed to sign transaction");
       }
       
       // Submit the signed transaction
       const result = await submitSignedTransaction({
-        signedTxn: signedTxns[0],
+        signedTxn: signedTransactions[0], 
         transactionId
       });
       
