@@ -585,52 +585,112 @@ export async function submitSignedTransaction(
  * Claims USDC from an escrow account
  */
 export async function claimFromEscrow(
-  escrowAddress: string,
-  logicSignature: algosdk.LogicSigAccount,
-  receiverAddress: string,
-  claimToken: string,
-  amount: number,
-): Promise<string> {
+  params: {
+    escrowAddress: string;
+    recipientAddress: string;
+    amount: number;
+    claimToken: string;
+    tealSource?: string;
+  },
+): Promise<{ 
+  transaction: algosdk.Transaction; 
+  logicSignature: algosdk.LogicSigAccount;
+  transactionId?: string; 
+}> {
   try {
+    const {
+      escrowAddress,
+      recipientAddress,
+      amount,
+      claimToken,
+      tealSource
+    } = params;
+
     // Validate addresses
     const validatedEscrow = ensureAddressString(escrowAddress);
-    const validatedReceiver = ensureAddressString(receiverAddress);
+    const validatedReceiver = ensureAddressString(recipientAddress);
 
-    // Get suggested params
-    const params = await algodClient.getTransactionParams().do();
+    console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
+
+    // Get the sender's address from the escrow address (for Logic Sig creation)
+    // In a real app, you might store this or derive it from the escrow address
+    const senderAddr = validatedEscrow;
+
+    // Create TEAL program for the escrow
+    let programSource = tealSource;
+    if (!programSource) {
+      // If no TEAL source provided, generate one
+      programSource = createEscrowTEAL(senderAddr);
+    }
+
+    // Compile the TEAL program
+    console.log("Compiling TEAL program for escrow");
+    const compiledProgram = await algodClient.compile(programSource).do();
+    const programBytes = new Uint8Array(
+      Buffer.from(compiledProgram.result, "base64"),
+    );
+
+    // Create LogicSigAccount
+    console.log("Creating LogicSigAccount for escrow");
+    const logicSignature = new algosdk.LogicSigAccount(programBytes);
+
+    // Get transaction parameters
+    const txParams = await algodClient.getTransactionParams().do();
     console.log("Got network parameters for claim");
 
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
-    console.log(`Claiming ${microAmount} microUSDC (${amount} USDC)`);
+    console.log(`Preparing to claim ${microAmount} microUSDC (${amount} USDC)`);
 
     // Create the transaction using the recommended maker function
     console.log(
       `Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`,
     );
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: validatedEscrow,           // Correct: 'sender' not 'from'  
-      receiver: validatedReceiver,       // Correct: 'receiver' not 'to'
+      sender: validatedEscrow,
+      receiver: validatedReceiver,
       amount: microAmount,
       note: Buffer.from(claimToken),
       assetIndex: USDC_ASSET_ID,
-      suggestedParams: params,
+      suggestedParams: txParams,
     });
 
-    // Sign transaction with logic signature
-    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+    // Return the unsigned transaction and logicSig
+    // The caller will handle signing and submitting
+    return {
+      transaction: txn,
+      logicSignature: logicSignature
+    };
+  } catch (error) {
+    console.error("Error preparing claim from escrow account:", error);
+    throw new Error("Failed to prepare claim from escrow account");
+  }
+}
 
+/**
+ * Executes a claim transaction that was already signed
+ */
+export async function executeClaimTransaction(
+  signedTxnBase64: string
+): Promise<string> {
+  try {
+    // Decode the signed transaction
+    const signedTxnBytes = Buffer.from(signedTxnBase64, 'base64');
+    
     // Submit transaction to network
-    const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    console.log("Submitting signed claim transaction to network");
+    const response = await algodClient.sendRawTransaction(signedTxnBytes).do();
 
     // Wait for confirmation
     const transactionId = extractTransactionId(response);
+    console.log(`Waiting for confirmation of transaction: ${transactionId}`);
     await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+    console.log(`Transaction confirmed: ${transactionId}`);
 
     return transactionId;
   } catch (error) {
-    console.error("Error claiming from escrow account:", error);
-    throw new Error("Failed to claim from escrow account");
+    console.error("Error executing claim transaction:", error);
+    throw new Error("Failed to execute claim transaction");
   }
 }
 

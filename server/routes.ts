@@ -70,6 +70,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Submit signed transaction
+  // Submit claim transaction 
+  app.post("/api/submit-claim", async (req: Request, res: Response) => {
+    try {
+      const { signedTxn, claimToken, recipientAddress } = req.body;
+      
+      if (!signedTxn || !claimToken || !recipientAddress) {
+        return res.status(400).json({ 
+          message: "Missing required fields: signedTxn, claimToken, or recipientAddress" 
+        });
+      }
+      
+      // Get transaction by claim token
+      const transaction = await storage.getTransactionByClaimToken(claimToken);
+      
+      if (!transaction) {
+        return res.status(404).json({ message: "Transaction not found" });
+      }
+      
+      if (transaction.claimed) {
+        return res.status(400).json({ message: "Funds have already been claimed" });
+      }
+      
+      try {
+        // Execute the claim transaction using the signed transaction
+        const txId = await executeClaimTransaction(signedTxn);
+        
+        // Mark transaction as claimed in the database with real txId
+        const updatedTransaction = await storage.markTransactionAsClaimed(
+          transaction.id,
+          recipientAddress,
+          txId
+        );
+        
+        return res.json({
+          success: true,
+          transaction: updatedTransaction,
+          transactionId: txId
+        });
+      } catch (error) {
+        console.error("Error submitting claim transaction:", error);
+        return res.status(500).json({ 
+          success: false, 
+          message: "Failed to submit claim transaction to the network" 
+        });
+      }
+    } catch (error) {
+      console.error("Error handling claim submission:", error);
+      return res.status(500).json({ message: "Failed to process claim submission" });
+    }
+  });
+
+  // Regular transaction submission
   app.post("/api/submit-transaction", async (req: Request, res: Response) => {
     try {
       // Validate the request using the schema
