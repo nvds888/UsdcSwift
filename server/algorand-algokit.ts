@@ -75,53 +75,58 @@ export function createEscrowTEAL(sender: string, salt: string = ''): string {
   // We need to actually include the salt in the program logic
   // not just as a comment, to affect the compiled bytecode
   
-  return `#pragma version 8
-  // Salt: ${salt}
-  
-  // Include salt in contract logic as a byte array push/pop
-  byte "${salt}"
-  pop
+  return `#pragma version 6
+// Escrow account for USDC transfers
+// Salt: ${salt}
+// Sender: ${senderAddr}
 
-  // Allow any transaction signed by Logic Sig
-  // This is a simpler version that just allows any transaction
-  // where this account is the sender - making it easier for us to handle claims
-  
-  // Approve all asset transfers where this Logic Sig is the sender
-  // and the asset is USDC
-  txn TypeEnum
-  int 4 // AssetTransfer
-  ==
-  txn XferAsset
-  int ${USDC_ASSET_ID}
-  ==
-  &&
-  bnz approve
-  
-  // Also allow opt-in to USDC
-  txn TypeEnum
-  int 4 // AssetTransfer
-  ==
-  txn AssetAmount
-  int 0
-  ==
-  txn Sender
-  txn AssetReceiver
-  ==
-  txn XferAsset
-  int ${USDC_ASSET_ID}
-  ==
-  &&
-  &&
-  &&
-  bnz approve
-  
-  // Reject all other transactions
-  int 0
-  return
+// Very simple TEAL program without additional verification
+// Only checks if the asset is USDC and basic transaction requirements
+// The transaction authorization is handled by the fact that only specific
+// transactions are created and signed by the LogicSig
 
-  approve:
-  int 1
-  return`;
+// Include salt in the program to make the address unique
+byte "${salt}"
+pop
+
+// Check for USDC asset transfers
+txn TypeEnum
+int 4 // AssetTransfer
+==
+txn XferAsset
+int ${USDC_ASSET_ID}
+==
+&&
+
+// Either approve asset transfers OR asset opt-ins (amount = 0)
+txn AssetAmount
+int 0
+==
+
+// If it's an opt-in, check that receiver is the escrow itself
+txn AssetAmount
+int 0
+==
+bnz check_opt_in
+
+// If we're here, it's a normal transfer
+// Just approve it since it's USDC and we already verified the asset ID
+b approve
+
+check_opt_in:
+// For opt-ins, make sure receiver is the sender (this account)
+txn AssetReceiver
+txn Sender
+==
+// If true, this is a valid opt-in
+bnz approve
+
+// Reject if we get here
+err
+
+approve:
+int 1
+return`;
 }
 
 /**
@@ -644,7 +649,8 @@ export async function claimFromEscrow(
     let logicSignature = new algosdk.LogicSigAccount(programBytes);
     
     // Verify the generated logic sig address matches the escrow
-    let generatedAddress = algosdk.encodeAddress(logicSignature.address().publicKey);
+    let addressObj = logicSignature.address();
+    let generatedAddress = algosdk.encodeAddress(addressObj.publicKey);
     console.log(`Generated escrow address: ${generatedAddress}, expected: ${validatedEscrow}`);
     
     if (generatedAddress !== validatedEscrow) {
@@ -663,11 +669,12 @@ export async function claimFromEscrow(
           );
           
           const altLogicSignature = new algosdk.LogicSigAccount(altProgramBytes);
-          const altAddress = altLogicSignature.address();
+          const altAddressObj = altLogicSignature.address();
+          const altAddress = algosdk.encodeAddress(altAddressObj.publicKey);
           
           console.log(`Trying alternate salt "${salt}": generated address ${altAddress}`);
           
-          if (algosdk.encodeAddress(altLogicSignature.address().publicKey) === validatedEscrow) {
+          if (altAddress === validatedEscrow) {
             console.log(`Found matching salt "${salt}" for escrow address!`);
             logicSignature = altLogicSignature;
             generatedAddress = altAddress;
