@@ -111,13 +111,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Transaction not found" });
       }
       
-      // Update transaction with blockchain transaction ID
-      // In a production app, we would update the database record here
-      // to record the blockchain transaction ID
+      // Update transaction with blockchain transaction ID when all transactions are complete
+      // For sequential transactions, we update the status when the last transaction is submitted
+      let txStatus = 'pending';
+      
+      // If this is the last transaction in the sequence (final USDC transfer), mark as completed
+      if (isSequential && sequentialIndex === 2) { // 2 represents the final USDC transfer transaction
+        console.log(`All sequential transactions completed for transaction ID ${transactionId}. Updating status to 'funded'`);
+        txStatus = 'funded';
+        
+        // In a production app, here we would update the database record with 'funded' status
+        // Update logic would go here
+      }
       
       return res.json({
         success: true,
-        transactionId: txId
+        transactionId: txId,
+        status: txStatus
       });
     } catch (error) {
       console.error("Error submitting signed transaction:", error);

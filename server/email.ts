@@ -45,7 +45,8 @@ export async function sendClaimEmail({
     const claimUrl = `${appDomain}/claim/${claimToken}`;
     
     // Email content
-    const emailFrom = `"AlgoSend" <${process.env.EMAIL_FROM || "algosend@example.com"}>`;
+    // Use the verified sender email address
+    const emailFrom = process.env.EMAIL_FROM || "planeify.business@gmail.com";
     const emailSubject = `You've received ${amount} USDC on Algorand!`;
     const emailText = `
       Hello,
@@ -103,17 +104,33 @@ export async function sendClaimEmail({
     
     // Try to send using SendGrid if API key is available
     if (process.env.SENDGRID_API_KEY) {
-      const msg = {
-        to: recipientEmail,
-        from: emailFrom,
-        subject: emailSubject,
-        text: emailText,
-        html: emailHtml,
-      };
-      await sgMail.send(msg);
-      console.log(`Email sent to ${recipientEmail} using SendGrid`);
+      try {
+        const msg = {
+          to: recipientEmail,
+          from: emailFrom,
+          subject: emailSubject,
+          text: emailText,
+          html: emailHtml,
+        };
+        await sgMail.send(msg);
+        console.log(`Email sent to ${recipientEmail} using SendGrid`);
+      } catch (sgError) {
+        console.error("SendGrid error:", sgError);
+        console.log("Falling back to nodemailer...");
+        
+        // Fall back to nodemailer transport
+        const mailOptions = {
+          from: emailFrom,
+          to: recipientEmail,
+          subject: emailSubject,
+          text: emailText,
+          html: emailHtml,
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`Email sent to ${recipientEmail} using nodemailer transport`);
+      }
     } else {
-      // Fall back to nodemailer transport
+      // Use nodemailer transport if no SendGrid API key
       const mailOptions = {
         from: emailFrom,
         to: recipientEmail,
