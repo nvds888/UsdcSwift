@@ -42,7 +42,13 @@ function isUsdcAsset(asset: any): boolean {
   const assetId = asset['asset-id'] || asset['assetId'] || asset.assetId;
   console.log(`Checking asset: ${JSON.stringify(asset, null, 2)}`);
   console.log(`Asset ID extracted: ${assetId}, comparing to USDC ID: ${USDC_ASSET_ID}`);
-  return String(assetId) === String(USDC_ASSET_ID);
+  
+  // Try multiple methods of comparison to ensure we match
+  return (
+    String(assetId) === String(USDC_ASSET_ID) ||
+    Number(assetId) === USDC_ASSET_ID ||
+    assetId === USDC_ASSET_ID
+  );
 }
 
 /**
@@ -1006,12 +1012,14 @@ export async function claimFromEscrowWithCompiledTeal({
   escrowAddress,
   recipientAddress,
   amount,
-  compiledTealProgram
+  compiledTealProgram,
+  skipOptInCheck = false // New parameter to skip opt-in check
 }: {
   escrowAddress: string;
   recipientAddress: string;
   amount: number;
   compiledTealProgram: string; // Base64 encoded compiled TEAL program
+  skipOptInCheck?: boolean; // Optional parameter to skip opt-in verification
 }): Promise<string> {
   try {
     console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress} using stored compiled program`);
@@ -1033,23 +1041,27 @@ export async function claimFromEscrowWithCompiledTeal({
     const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
     
     // Verify that the recipient account exists and has opted into USDC
-    try {
-      const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
-      const assets = accountInfo.assets || [];
-      
-      // Check if recipient has opted into USDC using our helper function
-      console.log(`Checking if recipient ${validatedRecipient} has opted into USDC...`);
-      const hasOptedIn = assets.some(isUsdcAsset);
-      
-      if (!hasOptedIn) {
-        console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
-        throw new Error("Recipient has not opted into USDC. They must opt in to the USDC asset first.");
+    if (!skipOptInCheck) {
+      try {
+        const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
+        const assets = accountInfo.assets || [];
+        
+        // Check if recipient has opted into USDC using our helper function
+        console.log(`Checking if recipient ${validatedRecipient} has opted into USDC...`);
+        const hasOptedIn = assets.some(isUsdcAsset);
+        
+        if (!hasOptedIn) {
+          console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
+          throw new Error("Recipient has not opted into USDC. They must opt in to the USDC asset first.");
+        }
+        
+        console.log(`Recipient ${validatedRecipient} has opted into USDC`);
+      } catch (error: any) {
+        console.error("Error checking accounts:", error);
+        throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
       }
-      
-      console.log(`Recipient ${validatedRecipient} has opted into USDC`);
-    } catch (error: any) {
-      console.error("Error checking accounts:", error);
-      throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
+    } else {
+      console.log("Skipping opt-in verification as requested");
     }
     
     // Create LogicSig from the stored compiled program
