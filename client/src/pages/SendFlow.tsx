@@ -24,7 +24,11 @@ import WalletModal from "@/components/WalletModal";
 
 // Form validation schema
 const sendSchema = z.object({
-  amount: z.string().min(1, "Amount is required"),
+  amount: z.string()
+    .min(1, "Amount is required")
+    .refine(val => !isNaN(parseFloat(val)), "Amount must be a number")
+    .refine(val => parseFloat(val) > 0, "Amount must be greater than 0")
+    .refine(val => parseFloat(val) <= 184, "Amount cannot exceed your balance"),
   recipientEmail: z.string().email("Valid email address is required"),
   note: z.string().max(150, "Note must be 150 characters or less").optional(),
 });
@@ -48,6 +52,16 @@ const SendFlow: React.FC = () => {
       recipientEmail: "",
       note: "",
     },
+    mode: "onChange", // Validate on change to provide immediate feedback
+  });
+  
+  // Debug form validation
+  const formState = form.formState;
+  console.log("Form validation state:", { 
+    isValid: formState.isValid,
+    errors: formState.errors,
+    values: form.getValues(),
+    dirtyFields: formState.dirtyFields
   });
 
   // Prompt user to connect wallet if not connected
@@ -64,6 +78,8 @@ const SendFlow: React.FC = () => {
 
   // Handle form submission
   const onSubmit = async (data: FormValues) => {
+    console.log("Form submitted with data:", data);
+    
     if (!activeAccount) {
       toast({
         title: "Wallet Required",
@@ -71,6 +87,13 @@ const SendFlow: React.FC = () => {
         variant: "destructive",
       });
       setIsWalletModalOpen(true);
+      return;
+    }
+    
+    // Force validation before proceeding
+    const isValid = await form.trigger();
+    if (!isValid) {
+      console.log("Form validation failed:", form.formState.errors);
       return;
     }
 
@@ -196,6 +219,12 @@ const SendFlow: React.FC = () => {
                               min="0.01"
                               placeholder="0.00"
                               className="pl-8 pr-12"
+                              onChange={(e) => {
+                                // Update the field value
+                                field.onChange(e);
+                                // Trigger validation
+                                form.trigger("amount");
+                              }}
                             />
                           </FormControl>
                           <div className="absolute inset-y-0 right-0 flex items-center">
