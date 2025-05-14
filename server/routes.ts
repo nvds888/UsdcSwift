@@ -18,7 +18,7 @@ import {
   claimFromEscrow,
   reclaimFromEscrow,
   getUserBalance
-} from "./algokit-adapter"; // Using our AlgoKit adapter
+} from "./algokit-adapter-fixed"; // Using our fixed adapter implementation
 import { sendClaimEmail } from "./email";
 
 export async function registerRoutes(app: Express): Promise<Server> {

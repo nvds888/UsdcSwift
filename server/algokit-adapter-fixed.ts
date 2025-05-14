@@ -105,7 +105,7 @@ export async function createEscrowAccount(sender: string): Promise<{
       claimToken,
       logicSignature
     };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error creating escrow account:', error);
     throw new Error(`Failed to create escrow account: ${String(error)}`);
   }
@@ -128,13 +128,15 @@ export async function prepareFundEscrowTransaction(
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // Create asset transfer transaction
+    // Create asset transfer transaction using makeAssetTransferTxnWithSuggestedParamsFromObject
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: senderAccount,
       to: escrowAddress,
       amount: microAmount,
       assetIndex: USDC_ASSET_ID,
       suggestedParams,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
       note: new Uint8Array(Buffer.from("USDC Email Transfer"))
     });
     
@@ -142,7 +144,7 @@ export async function prepareFundEscrowTransaction(
       txnId: txn.txID(),
       escrowAddress
     };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error preparing fund transaction:', error);
     throw new Error(`Failed to prepare fund transaction: ${String(error)}`);
   }
@@ -156,14 +158,14 @@ export async function submitSignedTransaction(signedTxn: Uint8Array): Promise<{ 
     // Submit the transaction
     const response = await algodClient.sendRawTransaction(signedTxn).do();
     
-    // Extract transaction ID
-    const txId = response.txId || response.txid;
+    // Extract transaction ID (handle both formats)
+    const txId = response.txid;
     
     // Wait for confirmation
     await algosdk.waitForConfirmation(algodClient, txId, 5);
     
     return { txId };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error submitting transaction:', error);
     throw new Error(`Failed to submit transaction: ${String(error)}`);
   }
@@ -186,9 +188,12 @@ export async function claimFromEscrow(
     let microAmount = 0;
     const assets = accountInfo.assets || [];
     for (const asset of assets) {
-      if (asset.assetId === USDC_ASSET_ID) {
-        // Convert BigInt to Number for our transaction amount
-        microAmount = Number(asset.amount);
+      // Handle different API formats for asset ID
+      const assetId = 'asset-id' in asset ? asset['asset-id'] : asset.assetId;
+      if (assetId === USDC_ASSET_ID) {
+        // Handle different amount formats
+        microAmount = typeof asset.amount === 'bigint' ? 
+          Number(asset.amount) : Number(asset.amount);
         break;
       }
     }
@@ -200,20 +205,19 @@ export async function claimFromEscrow(
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // Create asset transfer transaction
+    // Create asset transfer transaction 
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: recipientAddress,
       amount: microAmount,
       assetIndex: USDC_ASSET_ID,
       suggestedParams,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
       note: new Uint8Array(Buffer.from("USDC Claim"))
     });
     
-    // Sign transaction with logic signature
-    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
-    
-    return txn; // Return the transaction, not the blob
+    return txn;
   } catch (error: unknown) {
     console.error('Error claiming from escrow:', error);
     throw new Error(`Failed to claim from escrow: ${String(error)}`);
@@ -237,9 +241,12 @@ export async function reclaimFromEscrow(
     let microAmount = 0;
     const assets = accountInfo.assets || [];
     for (const asset of assets) {
-      if (asset.assetId === USDC_ASSET_ID) {
-        // Convert BigInt to Number for our transaction amount
-        microAmount = Number(asset.amount);
+      // Handle different API formats for asset ID
+      const assetId = 'asset-id' in asset ? asset['asset-id'] : asset.assetId;
+      if (assetId === USDC_ASSET_ID) {
+        // Handle different amount formats
+        microAmount = typeof asset.amount === 'bigint' ? 
+          Number(asset.amount) : Number(asset.amount);
         break;
       }
     }
@@ -251,20 +258,24 @@ export async function reclaimFromEscrow(
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // Create asset transfer transaction with claim token in note field
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: escrowAddress,
-      to: senderAddress,
-      amount: microAmount,
-      assetIndex: USDC_ASSET_ID,
-      suggestedParams,
-      note: new Uint8Array(Buffer.from(claimToken))
-    });
+    // Create asset transfer transaction using direct function call
+    const txn = algosdk.makeAssetTransferTxn(
+      escrowAddress,
+      senderAddress,
+      undefined, // closeRemainderTo
+      undefined, // revocationTarget
+      suggestedParams.fee,
+      microAmount,
+      suggestedParams.firstRound,
+      suggestedParams.lastRound,
+      new Uint8Array(Buffer.from(claimToken)),
+      USDC_ASSET_ID,
+      suggestedParams.genesisID,
+      suggestedParams.genesisHash,
+      undefined // rekeyTo
+    );
     
-    // Sign transaction with logic signature
-    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
-    
-    return txn; // Return the transaction, not the blob
+    return txn;
   } catch (error: unknown) {
     console.error('Error reclaiming from escrow:', error);
     throw new Error(`Failed to reclaim from escrow: ${String(error)}`);
@@ -282,15 +293,19 @@ export async function getUserBalance(address: string): Promise<number> {
     // Look for USDC asset in assets array
     const assets = accountInfo.assets || [];
     for (const asset of assets) {
-      if (asset['asset-id'] === USDC_ASSET_ID) {
-        // Convert from microUSDC to USDC
-        return Number(asset.amount) / 1_000_000;
+      // Handle different API formats for asset ID
+      const assetId = 'asset-id' in asset ? asset['asset-id'] : asset.assetId;
+      if (assetId === USDC_ASSET_ID) {
+        // Convert from microUSDC to USDC, handling BigInt if needed
+        const amount = typeof asset.amount === 'bigint' ? 
+          Number(asset.amount) : Number(asset.amount);
+        return amount / 1_000_000;
       }
     }
     
     // No USDC found
     return 0;
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error getting user balance:', error);
     return 0;
   }
