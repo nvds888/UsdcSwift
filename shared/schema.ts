@@ -16,6 +16,7 @@ export const transactions = pgTable("transactions", {
   note: text("note"),
   smartContractAddress: text("smart_contract_address").notNull(),
   compiledTealProgram: text("compiled_teal_program").notNull(), // Store the base64 compiled TEAL program
+  tealSource: text("teal_source"), // Store the original TEAL source code
   claimToken: text("claim_token").notNull().unique(),
   claimed: boolean("claimed").default(false),
   createdAt: timestamp("created_at").defaultNow(),
@@ -37,6 +38,7 @@ export const insertTransactionSchema = createInsertSchema(transactions).pick({
   note: true,
   smartContractAddress: true,
   compiledTealProgram: true,
+  tealSource: true,
   claimToken: true,
 });
 
