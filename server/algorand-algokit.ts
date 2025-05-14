@@ -63,12 +63,18 @@ function ensureAddressString(address: string | algosdk.Address): string {
  * - allows opt-in to USDC
  * - allows transfers to a recipient
  * - allows reclaiming by the sender
+ * @param sender The sender address that can reclaim funds
+ * @param salt An optional salt value to make the contract unique
  */
-export function createEscrowTEAL(sender: string): string {
+export function createEscrowTEAL(sender: string, salt: string = ''): string {
   // Ensure sender is a valid address string
   const senderAddr = ensureAddressString(sender);
+  
+  // Add comment with salt to make each contract unique
+  const saltComment = salt ? `// Salt: ${salt}` : '';
 
   return `#pragma version 8
+  ${saltComment}
 
   // Allow opt-in to USDC
   txn TypeEnum
@@ -186,7 +192,11 @@ export async function createEscrowAccount(sender: string): Promise<{
   console.log(`Creating escrow for sender address: ${validatedSender}`);
 
   // Create TEAL program with simplified logic
-  const tealProgram = createEscrowTEAL(validatedSender);
+  // Add a random salt to ensure a new address each time
+  // This ensures each transaction gets a unique escrow address
+  const salt = Math.floor(Math.random() * 1000000).toString();
+  console.log(`Using random salt for escrow: ${salt}`);
+  const tealProgram = createEscrowTEAL(validatedSender, salt);
 
   // Compile the program
   const compileResponse = await algodClient.compile(tealProgram).do();
