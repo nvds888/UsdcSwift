@@ -43,6 +43,7 @@ const SendFlowNew: React.FC = () => {
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<"amount" | "recipient" | "confirm" | "success">("amount");
   const [transaction, setTransaction] = useState<TransactionResponse | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState<boolean>(false);
   
   // Initialize form
   const form = useForm<FormValues>({

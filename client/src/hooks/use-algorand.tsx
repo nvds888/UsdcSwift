@@ -154,6 +154,18 @@ export function useAlgorand() {
       
       console.log("Transfer transaction submitted successfully");
       
+      // Extract status from response - this is the final transaction that should update the status
+      const transferResponseData = await transferResponse.json();
+      if (transferResponseData.status === 'funded') {
+        console.log("All transactions completed successfully, escrow is funded with USDC");
+        
+        // Update transaction in original transaction data
+        initialTransaction.status = transferResponseData.status;
+        
+        // Invalidate transaction queries to force a refresh
+        queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      }
+      
       return true;
     } catch (error) {
       console.error("Error in sequential transaction processing:", error);
