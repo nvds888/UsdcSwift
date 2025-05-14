@@ -73,7 +73,7 @@ export function useAlgorand() {
   };
   
   // Sign and submit transactions as part of an atomic group
-  // Fixed version of signAndSubmitAtomicGroup based on the provided solution
+  // Fixed version that handles pre-signed transactions correctly
   const signAndSubmitAtomicGroup = async (
     txnsToSign: string[],
     allTxns: string[],
@@ -82,72 +82,70 @@ export function useAlgorand() {
     try {
       console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // First, decode all transactions properly
-      const decodedTxns: (algosdk.Transaction | Uint8Array)[] = [];
-      const indexesToSign: number[] = [];
+      // The key insight: We need to only pass unsigned transactions to the wallet
+      // Pre-signed transactions should not be included in the wallet signing call
       
+      // First, identify which transactions need signing
+      const indexesToSign: number[] = [];
+      const unsignedTxns: Uint8Array[] = [];
+      const signedTxns: (Uint8Array | null)[] = new Array(allTxns.length).fill(null);
+      
+      // Process each transaction
       for (let i = 0; i < allTxns.length; i++) {
         const txnBinary = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
         
         try {
-          // Try to decode as a transaction
+          // Try to decode as unsigned transaction
           const txn = algosdk.decodeUnsignedTransaction(txnBinary);
-          decodedTxns.push(txn);
+          console.log(`Transaction ${i} decoded as unsigned, type: ${txn.type}`);
           
-          // Check if this transaction needs signing
-          // (it should be in our txnsToSign array)
-          if (txnsToSign.includes(allTxns[i])) {
-            indexesToSign.push(i);
-          }
+          // This is an unsigned transaction that needs signing
+          indexesToSign.push(unsignedTxns.length); // Index in the unsignedTxns array
+          unsignedTxns.push(txnBinary);
         } catch (e) {
-          // This is likely a pre-signed transaction (like the opt-in)
-          // Keep it as binary
-          console.log(`Transaction ${i} is pre-signed, keeping as binary`);
-          decodedTxns.push(txnBinary);
+          // This is likely a pre-signed transaction
+          console.log(`Transaction ${i} is pre-signed, will not be passed to wallet`);
+          // Store the pre-signed transaction at its correct position
+          signedTxns[i] = txnBinary;
         }
       }
       
-      console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
+      console.log(`Identified ${indexesToSign.length} transactions to sign at indexes: ${indexesToSign.join(', ')}`);
       
-      // For the Pera wallet, we need to pass the transactions in the correct format
-      // The wallet expects Transaction objects for unsigned transactions
-      // and Uint8Array for pre-signed transactions
+      // Now sign only the unsigned transactions
+      const walletSignedTxns = await signTransactions(unsignedTxns);
       
-      // However, we need to encode unsigned transactions properly
-      const txnsForWallet: Uint8Array[] = [];
-      
-      for (let i = 0; i < decodedTxns.length; i++) {
-        const txn = decodedTxns[i];
-        
-        if (algosdk.Transaction.prototype.isPrototypeOf(txn)) {
-          // Unsigned transaction - encode it
-          txnsForWallet.push(algosdk.encodeUnsignedTransaction(txn as algosdk.Transaction));
-        } else {
-          // Pre-signed transaction - use as is
-          txnsForWallet.push(txn as Uint8Array);
-        }
-      }
-      
-      console.log(`Prepared ${txnsForWallet.length} transactions for wallet`);
-      
-      // Sign only the transactions that need signing
-      const signedTxns = await signTransactions(txnsForWallet, indexesToSign);
-      
-      if (!signedTxns || !signedTxns.length) {
+      if (!walletSignedTxns || walletSignedTxns.length !== unsignedTxns.length) {
         console.error("Failed to sign transactions properly");
         return false;
       }
       
-      // Typically for atomic groups, we just submit the signed transaction
-      // For Algorand, this is all we need to do since the node will 
-      // handle propagating it to the rest of the group
+      // Reconstruct the full transaction array with both signed and pre-signed transactions
+      let signedIndex = 0;
+      for (let i = 0; i < allTxns.length; i++) {
+        if (signedTxns[i] === null) {
+          // This was an unsigned transaction, now signed by the wallet
+          signedTxns[i] = walletSignedTxns[signedIndex];
+          signedIndex++;
+        }
+        // Pre-signed transactions are already in signedTxns[i]
+      }
       
-      // Convert to base64 for API submission
-      const signedTxnBase64 = Buffer.from(signedTxns[0]).toString('base64');
+      // Verify we have all transactions
+      if (signedTxns.some(txn => txn === null)) {
+        console.error("Missing some transactions after signing");
+        return false;
+      }
       
-      // Submit to the backend
+      // Submit the first signed transaction (for Algorand this triggers the whole group)
+      const firstSignedTxn = signedTxns[0];
+      if (!firstSignedTxn) {
+        console.error("First transaction was not properly signed");
+        return false;
+      }
+      
       const response = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: signedTxnBase64,
+        signedTxn: Buffer.from(firstSignedTxn).toString('base64'),
         transactionId
       });
       
@@ -159,6 +157,14 @@ export function useAlgorand() {
       return true;
     } catch (error) {
       console.error("Error in atomic transaction group signing:", error);
+      // If we catch the Pera wallet error, show a more helpful message
+      if (error instanceof Error && error.message.includes("Unrecognized transaction type")) {
+        toast({
+          title: "Wallet Error",
+          description: "There was an issue with the transaction format. Please try again.",
+          variant: "destructive",
+        });
+      }
       return false;
     }
   };
