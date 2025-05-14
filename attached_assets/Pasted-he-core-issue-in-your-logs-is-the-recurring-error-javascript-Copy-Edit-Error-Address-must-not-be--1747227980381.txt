@@ -1,0 +1,94 @@
+he core issue in your logs is the recurring error:
+
+javascript
+Copy
+Edit
+Error: Address must not be null or undefined
+This is thrown when creating a transaction in the Algorand SDK, specifically here:
+
+ruby
+Copy
+Edit
+at ensureAddress (/node_modules/algosdk/src/transaction.ts:76:11)
+Key places where the issue occurs:
+During escrow opt-in to USDC:
+
+ts
+Copy
+Edit
+Error opting escrow into USDC: Error: Address must not be null or undefined
+When preparing the escrow deployment:
+
+ts
+Copy
+Edit
+Error: Failed to prepare escrow deployment: Address must not be null or undefined
+Likely Cause
+You’re attempting to use an undefined or null address in makeAssetTransferTxnWithSuggestedParamsFromObject or makePaymentTxnWithSuggestedParamsFromObject.
+
+This could mean one of the following is missing:
+
+from
+
+to (likely the problem)
+
+assetReceiver
+
+assetSender
+
+or you're using an uninitialized variable when calling the transaction constructor.
+
+Steps to Debug
+In your optInEscrowToUSDC() and prepareCompleteEscrowDeployment() functions, check:
+
+Is the escrow address defined and in string format?
+
+Before calling algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject(...), add:
+
+ts
+Copy
+Edit
+if (!escrowAddress) throw new Error("Escrow address is undefined");
+Double check your use of address.toString() or algosdk.encodeAddress()
+
+If you’re passing algosdk.Address instead of a string, it might not be working correctly. You should use:
+
+ts
+Copy
+Edit
+const escrowAddressStr = algosdk.encodeAddress(escrowAddress.publicKey);
+Log input to the transaction constructor:
+Just before creating the transaction, log:
+
+ts
+Copy
+Edit
+console.log('Creating opt-in txn with:', {
+  from: sender,
+  to: receiver,
+  assetIndex: USDC_ASSET_ID,
+  ...
+});
+Example Fix
+Here’s how you might safely construct a transfer transaction:
+
+ts
+Copy
+Edit
+const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+  from: escrowAddressStr,
+  to: escrowAddressStr, // self-opt-in
+  assetIndex: USDC_ASSET_ID,
+  amount: 0,
+  suggestedParams
+});
+Be sure escrowAddressStr is defined and not an object.
+
+Summary
+The error means a null or undefined address is passed somewhere.
+
+Ensure all addresses are properly extracted and converted to strings.
+
+Use logging before transaction creation to confirm all values.
+
+If you paste the relevant code for optInEscrowToUSDC() or prepareCompleteEscrowDeployment(), I can point to the exact fix.

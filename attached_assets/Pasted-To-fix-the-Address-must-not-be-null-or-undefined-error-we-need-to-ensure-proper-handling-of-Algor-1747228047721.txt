@@ -1,0 +1,58 @@
+To fix the "Address must not be null or undefined" error, we need to ensure proper handling of Algorand Address objects. Here are the key fixes:
+
+1. Correct Address Conversion in Escrow Creation
+
+typescript
+// In createEscrowAccount function
+const escrowAddr = logicSignature.address();
+const escrowAddress = escrowAddr.toString(); // Convert Address object to string properly
+2. Simplify Address Handling in Opt-In Transaction
+
+typescript
+// In optInEscrowToUSDC function
+const escrAccount = logicSignature.address();
+const escrowAddressStr = escrAccount.toString(); // Directly get string address
+
+console.log("Validated escrow address:", escrowAddressStr);
+
+// Create the opt-in transaction
+const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+  from: escrowAddressStr,  // Now guaranteed to be a valid string
+  to: escrowAddressStr,
+  amount: 0,
+  assetIndex: USDC_ASSET_ID,
+  suggestedParams: params
+});
+3. Validate Sender Address Earlier
+
+typescript
+// At start of prepareCompleteEscrowDeployment
+// Validate sender address format
+try {
+  algosdk.decodeAddress(senderAddress);
+} catch (error) {
+  throw new Error(`Invalid sender address: ${senderAddress}`);
+}
+4. Update Funding Transaction Creation
+
+typescript
+// In prepareCompleteEscrowDeployment
+const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+  from: senderAddress,
+  to: escrowAddress,  // Already validated string
+  amount: minBalance,
+  suggestedParams: params
+});
+These changes ensure:
+
+Proper conversion of Address objects to strings using native toString()
+
+Earlier validation of address formats
+
+Consistent string addresses throughout transaction creation
+
+Removal of redundant address conversion checks
+
+The error occurred because we were manually handling address conversion instead of using the built-in Address object's toString() method, which reliably converts to the correct base32 address string. This fix ensures all address parameters passed to transaction creation functions are properly formatted strings.
+
+After applying these fixes, the escrow creation and funding process should complete without address validation errors.

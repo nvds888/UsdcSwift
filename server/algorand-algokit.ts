@@ -105,52 +105,20 @@ export async function optInEscrowToUSDC(
   logicSignature: algosdk.LogicSigAccount
 ): Promise<algosdk.Transaction> {
   try {
-    // Validate escrow address
-    if (!escrowAddress || escrowAddress.trim() === '') {
-      throw new Error('Escrow address is null, undefined, or empty');
-    }
-    
-    // Validate it's a valid Algorand address
-    let decodedAddress;
-    try {
-      decodedAddress = algosdk.decodeAddress(escrowAddress);
-      console.log("Decoded escrow address for opt-in:", decodedAddress);
-    } catch (error) {
-      throw new Error(`Invalid Algorand address format for escrow: ${escrowAddress}`);
-    }
-    
     console.log(`Opting escrow account ${escrowAddress} into USDC`);
     
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
     
-    // Use the account directly from logicSignature to avoid address conversion issues
+    // Use the account directly from logicSignature - more reliable
     const escrAccount = logicSignature.address();
+    const escrowAddressStr = escrAccount.toString(); // Directly get string address
     
-    // Ensure we have a string address from the escrow logic signature
-    // Some algosdk versions return an Address object which needs conversion
-    let escrowAddressStr = escrowAddress;
-    if (typeof escrAccount === 'object' && escrAccount !== null) {
-      try {
-        if ('publicKey' in escrAccount) {
-          escrowAddressStr = algosdk.encodeAddress(escrAccount.publicKey);
-          console.log("Converted escrow address to string:", escrowAddressStr);
-        }
-      } catch (err) {
-        console.log("Error converting address:", err);
-      }
-    }
-    
-    console.log("Using escrow account address:", escrowAddressStr);
-    
-    // The SDK expects a string for the address parameters
-    if (!escrowAddressStr || typeof escrowAddressStr !== 'string') {
-      throw new Error(`Invalid escrow address format: ${escrowAddressStr} (type: ${typeof escrowAddressStr})`);
-    }
+    console.log("Validated escrow address:", escrowAddressStr);
     
     // Create the opt-in transaction
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: escrowAddressStr,
+      from: escrowAddressStr,  // Now guaranteed to be a valid string
       to: escrowAddressStr,
       amount: 0,
       assetIndex: USDC_ASSET_ID,
@@ -201,16 +169,10 @@ export async function createEscrowAccount(sender: string): Promise<{
   // Create logic signature
   const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
   
-  // Get the escrow account address - DON'T use toString() as it might cause issues with SDK
-  // Instead, directly use the Address object and convert to string exactly when needed
-  // Also let's log the actual value to see what we get
+  // Get the escrow account address using the recommended method
   const escrowAddr = logicSignature.address();
-  console.log("Raw escrow address type:", typeof escrowAddr);
-  console.log("Raw escrow address:", escrowAddr);
-  
-  // Convert to string in a way that algosdk expects
-  const escrowAddress = algosdk.encodeAddress(escrowAddr.publicKey);
-  console.log("Encoded escrow address:", escrowAddress);
+  const escrowAddress = escrowAddr.toString(); // Convert Address object to string properly
+  console.log("Generated escrow address:", escrowAddress);
   
   // Validate escrow address
   if (!escrowAddress || escrowAddress.trim() === '') {
@@ -282,7 +244,36 @@ export async function prepareCompleteEscrowDeployment(
     // Step 1: Create the escrow account
     const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
     
-    console.log(`Created escrow account at address: ${escrowAddress}`);
+    // Ensure we have a valid escrow address string
+    let escrowAddressStr = escrowAddress;
+    
+    // Validate the escrow address
+    if (!escrowAddressStr || typeof escrowAddressStr !== 'string') {
+      console.log("Converting escrow address to string...");
+      try {
+        // If it's an object with publicKey, try to encode it
+        if (typeof escrowAddress === 'object' && escrowAddress !== null && 'publicKey' in escrowAddress) {
+          escrowAddressStr = algosdk.encodeAddress(escrowAddress.publicKey);
+          console.log("Successfully converted escrow address to string:", escrowAddressStr);
+        } else {
+          throw new Error("Cannot convert escrow address: unexpected format");
+        }
+      } catch (error) {
+        console.error("Error converting escrow address:", error);
+        throw new Error(`Failed to convert escrow address: ${JSON.stringify(escrowAddress)}`);
+      }
+    }
+    
+    // Double check address validity
+    try {
+      algosdk.decodeAddress(escrowAddressStr);
+      console.log("Verified escrowAddressStr is a valid address");
+    } catch (error) {
+      console.error("Invalid escrow address:", error);
+      throw new Error("escrowAddressStr is not a valid Algorand address");
+    }
+    
+    console.log(`Created escrow account at address: ${escrowAddressStr}`);
     
     // Step 2: Get suggested transaction parameters
     const params = await algodClient.getTransactionParams().do();
@@ -306,12 +297,17 @@ export async function prepareCompleteEscrowDeployment(
     
     // Transaction 1: Fund escrow with minimum ALGO
     // Create payment transaction using makePaymentTxnWithSuggestedParamsFromObject
+    // Log transaction details for debugging
+    console.log('Creating funding transaction with:', {
+      from: senderAddress,
+      to: escrowAddressStr,
+      amount: minBalance
+    });
+    
     const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       from: senderAddress,
-      to: escrowAddress,
+      to: escrowAddressStr,
       amount: minBalance,
-      closeRemainderTo: undefined,
-      note: undefined,
       suggestedParams: params
     });
     
