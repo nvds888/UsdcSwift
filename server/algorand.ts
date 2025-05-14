@@ -247,18 +247,18 @@ export async function getUserBalance(address: string): Promise<number> {
       for (const asset of accountInfo.assets) {
         // For this example, checking specific asset ID
         // In a real app, you'd want to verify the asset more thoroughly
-        console.log(`Asset details: ${JSON.stringify({
-          amount: asset.amount,
-          assetId: asset.assetId,
-          isFrozen: asset.isFrozen
-        })}`);
+        // Convert bigints to strings to avoid serialization issues
+        const amount = Number(asset.amount);
+        const assetId = Number(asset.assetId);
         
-        if (asset.amount > maxAmount) {
-          maxAmount = asset.amount;
+        console.log(`Asset details: {"amount":"${amount}","assetId":"${assetId}","isFrozen":${asset.isFrozen}}`);
+        
+        if (amount > maxAmount) {
+          maxAmount = amount;
         }
         
-        if (asset.assetId === USDC_ASSET_ID) {
-          usdcAmount = asset.amount / 1_000_000; // Convert from micro-USDC to USDC
+        if (assetId === USDC_ASSET_ID) {
+          usdcAmount = amount / 1_000_000; // Convert from micro-USDC to USDC
         }
       }
       

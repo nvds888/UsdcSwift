@@ -118,12 +118,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create a new transaction (send USDC)
   app.post("/api/send", async (req: Request, res: Response) => {
     try {
+      console.log("Send API received request:", JSON.stringify(req.body));
       const validatedData = sendUsdcSchema.parse(req.body);
+      console.log("Validated data:", JSON.stringify(validatedData));
+      
+      if (!validatedData.senderAddress) {
+        console.error("Error: senderAddress is undefined or empty");
+        return res.status(400).json({ message: "Sender address is required" });
+      }
       
       // Create escrow account
+      console.log("Creating escrow account for sender address:", validatedData.senderAddress);
       const { escrowAddress, claimToken, logicSignature } = await createEscrowAccount(
         validatedData.senderAddress
       );
+      
+      console.log("Created escrow with address:", escrowAddress, "and claimToken:", claimToken);
       
       // Store transaction in database
       const transaction = await storage.createTransaction({
@@ -135,8 +145,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         claimToken: claimToken,
       });
       
+      console.log("Stored transaction with id:", transaction.id);
+      
       // Prepare the transaction for the frontend to sign
       // This creates the actual transaction object that will be signed by the user's wallet
+      console.log("Preparing fund escrow transaction with sender:", validatedData.senderAddress, 
+                 "escrow:", escrowAddress, "amount:", validatedData.amount);
+      
       const txnParams = await prepareFundEscrowTransaction(
         validatedData.senderAddress,
         escrowAddress,

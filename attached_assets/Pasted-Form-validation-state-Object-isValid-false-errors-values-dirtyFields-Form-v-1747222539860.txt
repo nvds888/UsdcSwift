@@ -1,0 +1,30 @@
+Form validation state: 
+Object {isValid: false, errors: {…}, values: {…}, dirtyFields: {…}}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Form submitted with data: 
+Object {amount: "5", recipientEmail: "niels-vds@hotmail.nl", note: "hola"}
+Form validation state: 
+Object {isValid: true, errors: {…}, values: {…}, dirtyFields: {…}}
+Error sending USDC: 
+Error {}
+message: "500: {"message":"Failed to create transaction"}"
+stack: "Error: 500: {"message":"Failed to create transaction"}↵ at throwIfResNotOk (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/src/lib/queryClient.ts:5:11)↵ at async apiRequest (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/src/lib/queryClient.ts:15:3)↵ at async sendUsdc (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/src/hooks/use-algorand.tsx:55:19)↵ at async onSubmit (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/src/pages/SendFlowNew.tsx:116:26)↵ at async https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-WZM4WAID.js?v=a4155dda:1465:9"
+get stack: ƒ ()
+set stack: ƒ ()
+[[Prototype]]: Object
+
+at t.value (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/__replco/static/devtools/eruda/3.2.3/eruda.js:2:17465)
+at new t (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/__replco/static/devtools/eruda/3.2.3/eruda.js:2:12630)
+at t.value (https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/__replco/static/devtools/eruda/3.2.3/eruda.js:2:32766)
+at https://1b998dc0-97ad-44c8-9b36-c6ba6c025ab0-00-fwx1k47qpljk.spock.replit.dev/__replco/static/devtools/eruda/3.2.3/eruda.js:2:34400
+Form validation state: 
+Object {isValid: true, er
