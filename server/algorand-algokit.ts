@@ -140,14 +140,30 @@ export async function optInEscrowToUSDC(
 
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
+    
+    // Print if this is an algosdk.Address or string
+    console.log("Address type check:", {
+      validatedEscrowAddress: typeof validatedEscrowAddress,
+      isString: typeof validatedEscrowAddress === 'string',
+    });
+    
+    if (!validatedEscrowAddress || typeof validatedEscrowAddress !== 'string') {
+      throw new Error(`Escrow address must be a string, got: ${typeof validatedEscrowAddress}`);
+    }
 
-    // Create the opt-in transaction with properly formatted addresses
-    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+    // Create the opt-in transaction with updated parameter naming
+    // Creating manually with correct parameters for the current algosdk version
+    const optInTxn = new algosdk.Transaction({
       from: validatedEscrowAddress,
       to: validatedEscrowAddress,
       amount: 0,
       assetIndex: USDC_ASSET_ID,
-      suggestedParams: params,
+      type: algosdk.TransactionType.axfer,
+      fee: params.fee,
+      firstRound: params.firstRound || params.firstValid,
+      lastRound: params.lastRound || params.lastValid,
+      genesisHash: params.genesisHash,
+      genesisID: params.genesisID,
     });
 
     console.log("Successfully created opt-in transaction");
@@ -289,22 +305,47 @@ export async function prepareCompleteEscrowDeployment(
     let txns = [];
 
     // Transaction 1: Fund escrow with minimum ALGO
-    console.log("Creating funding transaction with:", {
-      from: validatedSender,
-      to: escrowAddress,
+    // Explicitly validate and log all parameters to debug the address issue
+    const fromAddr = validatedSender;
+    const toAddr = ensureAddressString(escrowAddress);
+    
+    console.log("Creating funding transaction with EXPLICIT string validation:", {
+      from: fromAddr,
+      fromType: typeof fromAddr,
+      to: toAddr,
+      toType: typeof toAddr,
       amount: minBalance,
     });
-
-    // Use validated addresses for all transactions
-    const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      from: validatedSender,
-      to: ensureAddressString(escrowAddress),
-      amount: minBalance,
-      suggestedParams: params,
-    });
-
-    console.log(`Created funding transaction: ${fundingTxn.txID()}`);
-    txns.push(fundingTxn);
+    
+    try {
+      // Double-check that we have valid string addresses
+      if (!fromAddr || typeof fromAddr !== 'string') {
+        throw new Error(`Sender address must be a valid string, got: ${typeof fromAddr}`);
+      }
+      
+      if (!toAddr || typeof toAddr !== 'string') {
+        throw new Error(`Escrow address must be a valid string, got: ${typeof toAddr}`);
+      }
+      
+      // Create payment transaction with the validated addresses using Transaction constructor
+      const fundingTxn = new algosdk.Transaction({
+        from: fromAddr,
+        to: toAddr,
+        amount: minBalance,
+        type: algosdk.TransactionType.pay,
+        fee: params.fee,
+        firstRound: params.firstRound || params.firstValid,
+        lastRound: params.lastRound || params.lastValid,
+        genesisHash: params.genesisHash,
+        genesisID: params.genesisID
+      });
+      
+      console.log(`Created funding transaction: ${fundingTxn.txID()}`);
+      txns.push(fundingTxn);
+    } catch (err: any) {
+      console.error("Error creating funding transaction:", err);
+      throw new Error(`Failed to create funding transaction: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     // Transaction 2: Opt escrow into USDC
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
