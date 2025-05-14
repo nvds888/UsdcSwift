@@ -143,7 +143,13 @@ export async function prepareFundEscrowTransaction(
     
     // Get suggested params
     const params = await algodClient.getTransactionParams().do();
-    console.log("Got transaction parameters:", JSON.stringify(params));
+    
+    // Log params safely without BigInt serialization issues
+    console.log("Got transaction parameters with fee:", 
+                params.fee ? params.fee.toString() : 'undefined', 
+                "flatFee:", params.flatFee,
+                "genesisHash:", params.genesisHash,
+                "genesisID:", params.genesisID);
     
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
@@ -153,8 +159,8 @@ export async function prepareFundEscrowTransaction(
     console.log("Creating transaction with parameters:", {
       from: senderAccount,
       to: escrowAddress,
-      amount: microAmount,
-      assetIndex: USDC_ASSET_ID
+      amount: microAmount.toString(),
+      assetIndex: USDC_ASSET_ID.toString()
     });
     
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
