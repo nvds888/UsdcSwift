@@ -258,22 +258,17 @@ export async function reclaimFromEscrow(
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // Create asset transfer transaction using direct function call
-    const txn = algosdk.makeAssetTransferTxn(
-      escrowAddress,
-      senderAddress,
-      undefined, // closeRemainderTo
-      undefined, // revocationTarget
-      suggestedParams.fee,
-      microAmount,
-      suggestedParams.firstRound,
-      suggestedParams.lastRound,
-      new Uint8Array(Buffer.from(claimToken)),
-      USDC_ASSET_ID,
-      suggestedParams.genesisID,
-      suggestedParams.genesisHash,
-      undefined // rekeyTo
-    );
+    // Create asset transfer transaction using the object-based approach
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: escrowAddress,
+      to: senderAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams,
+      closeRemainderTo: undefined,
+      revocationTarget: undefined,
+      note: new Uint8Array(Buffer.from(claimToken))
+    });
     
     return txn;
   } catch (error: unknown) {
@@ -293,13 +288,26 @@ export async function getUserBalance(address: string): Promise<number> {
     // Look for USDC asset in assets array
     const assets = accountInfo.assets || [];
     for (const asset of assets) {
-      // Handle different API formats for asset ID
-      const assetId = 'asset-id' in asset ? asset['asset-id'] : asset.assetId;
-      if (assetId === USDC_ASSET_ID) {
-        // Convert from microUSDC to USDC, handling BigInt if needed
-        const amount = typeof asset.amount === 'bigint' ? 
-          Number(asset.amount) : Number(asset.amount);
-        return amount / 1_000_000;
+      try {
+        // Handle different API formats for asset ID
+        // For Algorand client, asset fields could be 'asset-id' (indexed access) or assetId (property access)
+        let assetId;
+        if ('asset-id' in asset) {
+          assetId = asset['asset-id'];
+        } else if (asset.assetId !== undefined) {
+          assetId = asset.assetId;
+        } else if (asset['assetId'] !== undefined) {
+          assetId = asset['assetId'];
+        }
+        
+        if (assetId == USDC_ASSET_ID) { // Use non-strict comparison for number/string conversion
+          // Convert from microUSDC to USDC, handling different formats
+          const amount = Number(asset.amount); // Convert any format to Number
+          return amount / 1_000_000;
+        }
+      } catch (err) {
+        console.error('Error processing asset data:', err);
+        continue; // Skip this asset if there was an issue
       }
     }
     
