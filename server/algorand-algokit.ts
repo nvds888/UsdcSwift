@@ -147,18 +147,14 @@ export async function optInEscrowToUSDC(
       isString: typeof validatedEscrowAddress === 'string',
     });
     
-    // Create opt-in transaction using direct methods (not Object params)
-    // This is more reliable with algosdk type definitions
-    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParams(
-      validatedEscrowAddress,  // from
-      validatedEscrowAddress,  // to
-      undefined,               // closeRemainderTo
-      undefined,               // revocationTarget
-      0,                       // amount (0 for opt-in)
-      undefined,               // note
-      USDC_ASSET_ID,           // assetIndex
-      params                   // suggestedParams
-    );
+    // Create opt-in transaction using FromObject pattern for algosdk 3.2.0
+    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedEscrowAddress,
+      receiver: validatedEscrowAddress,
+      amount: 0,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params,
+    });
 
     console.log("Successfully created opt-in transaction");
     return optInTxn;
@@ -312,16 +308,13 @@ export async function prepareCompleteEscrowDeployment(
     });
     
     try {
-      // Create payment transaction using direct parameters method
-      // This is more reliable with algosdk type definitions
-      const fundingTxn = algosdk.makePaymentTxnWithSuggestedParams(
-        fromAddr,      // from
-        toAddr,        // to
-        minBalance,    // amount
-        undefined,     // closeRemainderTo
-        undefined,     // note
-        params         // suggestedParams
-      );
+      // Create payment transaction using FromObject pattern for algosdk 3.2.0
+      const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: fromAddr,
+        receiver: toAddr,
+        amount: minBalance,
+        suggestedParams: params
+      });
       
       console.log(`Created funding transaction: ${fundingTxn.txID()}`);
       txns.push(fundingTxn);
