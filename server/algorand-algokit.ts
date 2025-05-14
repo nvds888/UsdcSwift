@@ -39,16 +39,37 @@ function extractTransactionId(response: any): string {
  */
 function isUsdcAsset(asset: any): boolean {
   // Handle different property naming conventions
-  const assetId = asset['asset-id'] || asset['assetId'] || asset.assetId;
+  // Use a safer approach to access properties that may not exist in the TypeScript type
+  const assetId = 
+    asset && typeof asset === 'object' 
+      ? (
+          // Try all possible ways the asset ID might be stored
+          (asset as any)['asset-id'] || 
+          (asset as any).assetId || 
+          (asset as any)['assetId'] || 
+          (asset as any)['asset_id'] || 
+          (asset as any).asset_id
+        ) 
+      : undefined;
+  
   console.log(`Checking asset: ${JSON.stringify(asset, null, 2)}`);
   console.log(`Asset ID extracted: ${assetId}, comparing to USDC ID: ${USDC_ASSET_ID}`);
   
+  // If we couldn't extract an asset ID, log it and return false
+  if (assetId === undefined) {
+    console.log("Could not extract asset ID from asset object");
+    return false;
+  }
+  
   // Try multiple methods of comparison to ensure we match
-  return (
+  const isMatch = (
     String(assetId) === String(USDC_ASSET_ID) ||
     Number(assetId) === USDC_ASSET_ID ||
     assetId === USDC_ASSET_ID
   );
+  
+  console.log(`Asset ID ${assetId} ${isMatch ? 'matches' : 'does not match'} USDC ID ${USDC_ASSET_ID}`);
+  return isMatch;
 }
 
 /**
@@ -1012,14 +1033,12 @@ export async function claimFromEscrowWithCompiledTeal({
   escrowAddress,
   recipientAddress,
   amount,
-  compiledTealProgram,
-  skipOptInCheck = false // New parameter to skip opt-in check
+  compiledTealProgram
 }: {
   escrowAddress: string;
   recipientAddress: string;
   amount: number;
   compiledTealProgram: string; // Base64 encoded compiled TEAL program
-  skipOptInCheck?: boolean; // Optional parameter to skip opt-in verification
 }): Promise<string> {
   try {
     console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress} using stored compiled program`);
