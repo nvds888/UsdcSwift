@@ -119,16 +119,32 @@ export function useAlgorand() {
       // First, we'll reparse the base64 transactions to ensure proper format
       const stxns: Uint8Array[] = [];
       
-      try {
-        // Re-decode from the base64 strings to ensure consistent formats
-        for (let i = 0; i < allTxns.length; i++) {
-          const rawTxnBytes = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
-          stxns.push(rawTxnBytes);
+      // Following the advice from the Pera wallet error guide...
+      console.log("Validating all transactions in the group before signing:");
+      allTxns.forEach((txn, i) => {
+        try {
+          const txnBytes = new Uint8Array(Buffer.from(txn, 'base64'));
+          
+          // Try to decode and validate each transaction
+          try {
+            const decodedTxn = algosdk.decodeUnsignedTransaction(txnBytes);
+            console.log(`Txn ${i} decoded successfully as type:`, decodedTxn.type);
+            stxns.push(txnBytes);
+          } catch (e) {
+            // If transaction 1 (the pre-signed one), we need special handling
+            if (i === 1) {
+              console.log(`Txn ${i} is a pre-signed transaction, using raw bytes`);
+              stxns.push(txnBytes);
+            } else {
+              console.error(`Txn ${i} failed to decode:`, e);
+              throw e;
+            }
+          }
+        } catch (err) {
+          console.error(`Error processing transaction ${i}:`, err);
+          throw err;
         }
-      } catch (err) {
-        console.error("Error decoding transaction bytes:", err);
-        throw err;
-      }
+      });
       
       console.log(`Prepared ${stxns.length} raw transactions for wallet signing`);
       

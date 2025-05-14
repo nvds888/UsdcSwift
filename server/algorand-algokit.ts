@@ -419,12 +419,42 @@ export async function prepareCompleteEscrowDeployment(
       algosdk.encodeUnsignedTransaction(txns[2] as algosdk.Transaction), // USDC transfer (needs signing)
     ];
     
+    // Inspect all transactions before encoding
+    try {
+      console.log("Transaction debugging - pre-encoding checks:");
+      txns.forEach((txn, i) => {
+        try {
+          if (i === 1) {
+            console.log(`Transaction ${i} is a pre-signed LogicSig blob, skipping decode check`);
+          } else {
+            const decodedTxn = algosdk.Transaction.prototype.isPrototypeOf(txn) ? 
+              (txn as algosdk.Transaction) : algosdk.decodeUnsignedTransaction(txn as Uint8Array);
+            console.log(`Transaction ${i} has valid type: ${decodedTxn.type}`);
+          }
+        } catch (e) {
+          console.error(`Transaction ${i} failed decode check:`, e);
+        }
+      });
+    } catch (e) {
+      console.error("Error during transaction inspection:", e);
+    }
+    
     // Encode all transactions including pre-signed ones for transaction group integrity
+    // IMPORTANT: The middle transaction (opt-in) must be properly encoded as a Uint8Array
     const allEncodedTxns = [
       algosdk.encodeUnsignedTransaction(txns[0] as algosdk.Transaction),      // funding transaction
       signedOptInTxn.blob,                                                    // opt-in transaction (pre-signed) 
       algosdk.encodeUnsignedTransaction(txns[2] as algosdk.Transaction),      // USDC transfer
     ];
+    
+    // Debug: Check that all encoded transactions are Uint8Arrays
+    allEncodedTxns.forEach((txn, i) => {
+      if (!(txn instanceof Uint8Array)) {
+        console.error(`Error: Transaction ${i} is not a Uint8Array after encoding!`);
+      } else {
+        console.log(`Transaction ${i} successfully encoded as Uint8Array, length: ${txn.length}`);
+      }
+    });
     
     // Return all transaction info
     return {

@@ -1,0 +1,94 @@
+❌ Problem:
+The wallet (Pera) throws this:
+
+bash
+Copy
+Edit
+[Wallet:PERA] Error signing transactions: Unrecognized transaction type:
+This happens when one or more transactions in the group is incorrectly encoded, specifically:
+
+✅ Successfully decoded transaction 0
+⚠️ Using raw binary for transaction 1
+✅ Successfully decoded transaction 2
+
+Then:
+
+❌ "Unrecognized transaction type: " → Means tx 1 is broken and crashes the whole group.
+
+🔍 Root Cause:
+You’re passing a corrupted or improperly encoded transaction 1 (Uint8Array) in the group.
+
+This usually happens if:
+
+You forgot to serialize a transaction properly.
+
+You included undefined, an empty array, or something that isn’t a valid Uint8Array or Transaction.
+
+✅ Fix It – Step-by-step
+1. Inspect the array allTxnsBase64 or groupTxns
+Log it:
+
+ts
+Copy
+Edit
+allTxns.forEach((txn, i) => {
+  try {
+    const decoded = algosdk.decodeUnsignedTransaction(txn);
+    console.log(`Txn ${i} decoded as type:`, decoded.type);
+  } catch (e) {
+    console.error(`Txn ${i} failed to decode`, e);
+  }
+});
+You’ll likely see something like:
+
+pgsql
+Copy
+Edit
+Txn 0 decoded as type: pay
+Txn 1 failed to decode Error: Unrecognized transaction type
+Txn 2 decoded as type: axfer
+2. Trace how txn 1 is built
+Find where you're creating transaction 1 (most likely the smart contract call / ApplicationCallTxn).
+
+Check:
+
+Are you calling txn.toByte() before including it in the group?
+
+Are you using a signed transaction accidentally in the group of unsigned txns?
+
+Are you including the raw Transaction object without serializing?
+
+It must be:
+
+ts
+Copy
+Edit
+const appCallTx = algosdk.makeApplicationCallTxnFromObject({...});
+const txnBytes = algosdk.encodeUnsignedTransaction(appCallTx);
+🧼 Sanity Example of a Valid Group:
+ts
+Copy
+Edit
+const txns = [txn1, txn2, txn3];
+algosdk.assignGroupID(txns);
+const signedTxns = await signTransactions(txns.map(t => t.toByte()), [0, 2]);
+✅ What to Do Now
+Check how you're creating transaction 1 — it’s the broken one.
+
+Ensure it's:
+
+Created with makeApplicationCallTxnFromObject (or similar)
+
+Not null or undefined
+
+Properly serialized with encodeUnsignedTransaction(txn)
+
+Log its output before grouping:
+
+ts
+Copy
+Edit
+console.log("Txn 1 raw object:", txn1);
+console.log("Txn 1 serialized:", encodeUnsignedTransaction(txn1));
+💡 Final Tip:
+If one transaction in the group is malformed, no popup appears, and Pera fails silently. That’s why transaction groups must be clean — all txns valid, properly ordered, and correctly encoded.
