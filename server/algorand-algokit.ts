@@ -1074,7 +1074,8 @@ export async function claimFromEscrowWithCompiledTeal({
   amount,
   compiledTealProgram,
   tealSource,
-  tealSalt
+  tealSalt,
+  senderAddress // Add the original sender address as a parameter
 }: {
   escrowAddress: string;
   recipientAddress: string;
@@ -1082,6 +1083,7 @@ export async function claimFromEscrowWithCompiledTeal({
   compiledTealProgram: string; // Base64 encoded compiled TEAL program
   tealSource?: string; // Original TEAL source code
   tealSalt?: string; // Salt used to create the TEAL program
+  senderAddress: string; // The original sender address that created the escrow
 }): Promise<string> {
   try {
     console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress}`);
@@ -1142,16 +1144,8 @@ export async function claimFromEscrowWithCompiledTeal({
       try {
         // Must use the original SENDER address, not the recipient
         // The sender is the one authorized to reclaim, and this is critical for validation
-        const transaction = await storage.getTransactionByClaimToken(claimToken);
-        const originalSenderAddress = transaction ? transaction.senderAddress : null;
-        
-        if (!originalSenderAddress) {
-          console.error("Could not find original sender address from transaction");
-          throw new Error("Failed to recreate TEAL program: missing sender address");
-        }
-        
-        console.log("Using original sender address for TEAL recreation:", originalSenderAddress);
-        const tealProgram = createEscrowTEAL(originalSenderAddress, tealSalt);
+        console.log("Using original sender address for TEAL recreation:", senderAddress);
+        const tealProgram = createEscrowTEAL(senderAddress, tealSalt);
         const compileResponse = await algodClient.compile(tealProgram).do();
         const compiledProgram = new Uint8Array(
           Buffer.from(compileResponse.result, "base64")
