@@ -18,14 +18,8 @@ import {
   claimFromEscrow,
   reclaimFromEscrow,
   getUserBalance
-} from "./algokit-adapter-fixed"; // Using our fixed adapter implementation
+} from "./algorand-algokit";
 import { sendClaimEmail } from "./email";
-
-// Initialize Algorand client for transaction creation
-const ALGOD_TOKEN = '';
-const ALGOD_SERVER = 'https://testnet-api.algonode.cloud';
-const ALGOD_PORT = '';
-const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get app domain for email links
@@ -199,19 +193,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Encode the transaction to base64 for sending to frontend
       let txnBase64;
       try {
-        // Create a transaction object from the txnId (our algokit-adapter-fixed returns txnId and escrowAddress)
-        // We'll need to create a raw transaction for the client to sign
-        const suggestedParams = await algodClient.getTransactionParams().do();
-        const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-          from: validatedData.senderAddress,
-          to: escrowAddress,
-          amount: Math.floor(parseFloat(validatedData.amount) * 1_000_000),
-          assetIndex: 10458941, // USDC on testnet
-          suggestedParams,
-          note: new Uint8Array(Buffer.from("USDC Email Transfer"))
-        });
-        
-        txnBase64 = Buffer.from(txn.toByte()).toString("base64");
+        txnBase64 = Buffer.from(
+          txnParams.txn.toByte()
+        ).toString("base64");
       } catch (error) {
         console.error("Error encoding transaction:", error);
         return res.status(500).json({ message: "Failed to encode transaction" });
