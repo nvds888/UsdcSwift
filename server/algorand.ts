@@ -5,7 +5,11 @@ import { v4 as uuidv4 } from "uuid";
 const ALGOD_SERVER = process.env.ALGOD_SERVER || "https://testnet-api.algonode.cloud";
 const ALGOD_PORT = process.env.ALGOD_PORT || "";
 const ALGOD_TOKEN = process.env.ALGOD_TOKEN || "";
-const USDC_ASSET_ID = parseInt(process.env.USDC_ASSET_ID || "10458941"); // Testnet USDC-like asset ID
+// Use an actual testnet USDC or USDT asset ID - this is just a sample
+// For real testnet USDC, you'll need the correct asset ID 
+// Mainnet USDC: 31566704, Testnet USDC could be different
+// Note: This could be different for your test wallet
+const USDC_ASSET_ID = parseInt(process.env.USDC_ASSET_ID || "10458941");
 
 // Initialize Algorand client
 const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
