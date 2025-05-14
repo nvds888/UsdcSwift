@@ -163,13 +163,37 @@ export async function prepareFundEscrowTransaction(
       assetIndex: USDC_ASSET_ID.toString()
     });
     
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: senderAccount,
-      to: escrowAddress,
-      amount: microAmount,
-      assetIndex: USDC_ASSET_ID,
-      suggestedParams: params
-    });
+    // Create transaction differently using explicit parameters to bypass the object issue
+    console.log("Creating USDC transfer transaction with modified approach");
+    
+    // Get the necessary parameters directly
+    const fee = params.fee || 1000;
+    const firstRound = params.firstRound || 0;
+    const lastRound = params.lastRound || 0;
+    const genesisHash = params.genesisHash;
+    const genesisID = params.genesisID;
+    
+    // Use suggested params directly to create the transaction
+    const suggestedParams = {
+      fee: fee,
+      firstRound: firstRound,
+      lastRound: lastRound,
+      genesisHash: genesisHash,
+      genesisID: genesisID,
+    };
+      
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
+    console.log("Using makeAssetTransferTxnWithSuggestedParams");
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParams(
+      senderAccount,   // from 
+      escrowAddress,   // to
+      undefined,       // closeRemainderTo
+      undefined,       // revocationTarget
+      microAmount,     // amount
+      undefined,       // note
+      USDC_ASSET_ID,   // assetIndex
+      suggestedParams  // suggestedParams
+    );
     
     return {
       txn,
@@ -221,15 +245,37 @@ export async function claimFromEscrow(
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
     
-    // Create asset transfer transaction
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: escrowAddress,
-      to: receiverAddress,
-      amount: microAmount,
-      note: Buffer.from(claimToken),
-      assetIndex: USDC_ASSET_ID,
-      suggestedParams: params
-    });
+    // Create transaction differently using explicit parameters
+    console.log("Creating claim transaction with modified approach");
+    
+    // Get the necessary parameters directly
+    const fee = params.fee || 1000;
+    const firstRound = params.firstRound || 0;
+    const lastRound = params.lastRound || 0;
+    const genesisHash = params.genesisHash;
+    const genesisID = params.genesisID;
+    
+    // Use suggested params directly to create the transaction
+    const suggestedParams = {
+      fee: fee,
+      firstRound: firstRound,
+      lastRound: lastRound,
+      genesisHash: genesisHash,
+      genesisID: genesisID,
+    };
+      
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
+    console.log("Using makeAssetTransferTxnWithSuggestedParams for claim");
+    const txn = algosdk.makeAssetTransferTxnWithSuggestedParams(
+      escrowAddress,    // from 
+      receiverAddress,  // to
+      undefined,        // closeRemainderTo
+      undefined,        // revocationTarget
+      microAmount,      // amount
+      Buffer.from(claimToken), // note
+      USDC_ASSET_ID,    // assetIndex
+      suggestedParams   // suggestedParams
+    );
     
     // Sign transaction with logic signature
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
@@ -264,7 +310,27 @@ export async function reclaimFromEscrow(
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
     
-    // Create asset transfer transaction
+    // Create transaction differently using explicit parameters
+    console.log("Creating reclaim transaction with modified approach");
+    
+    // Get the necessary parameters directly
+    const fee = params.fee || 1000;
+    const firstRound = params.firstRound || 0;
+    const lastRound = params.lastRound || 0;
+    const genesisHash = params.genesisHash;
+    const genesisID = params.genesisID;
+    
+    // Use suggested params directly to create the transaction
+    const suggestedParams = {
+      fee: fee,
+      firstRound: firstRound,
+      lastRound: lastRound,
+      genesisHash: genesisHash,
+      genesisID: genesisID,
+    };
+      
+    // Create the transaction with the makeAssetTransferTxnWithSuggestedParams method
+    console.log("Using makeAssetTransferTxnWithSuggestedParams for reclaim");
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       from: escrowAddress,
       to: senderAddress,
