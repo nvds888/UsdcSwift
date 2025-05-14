@@ -4,6 +4,7 @@ import { useWallet } from "@txnlab/use-wallet-react";
 import { useAlgorand } from "@/hooks/use-algorand";
 import { useToast } from "@/hooks/use-toast";
 import { TransactionResponse } from "@/lib/types";
+import { USDC_ASSET_ID, NETWORK } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,7 +20,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { ArrowLeft, Check, Clock, ExternalLink } from "lucide-react";
+import { ArrowLeft, Check, Clock, ExternalLink, Info } from "lucide-react";
 import WalletModal from "@/components/WalletModal";
 
 // Form validation schema
@@ -209,8 +210,9 @@ const SendFlowNew: React.FC = () => {
             {currentStep === "amount" && (
               <Card>
                 <CardContent className="p-6 md:p-8">
-                  <h2 className="text-2xl font-semibold mb-6">Send USDC</h2>
-                  <p className="text-gray-600 mb-8">Enter the amount you want to send.</p>
+                  <h2 className="text-2xl font-semibold mb-4">Send USDC</h2>
+
+                  <p className="text-gray-600 mb-6">Enter the amount you want to send.</p>
                   
                   <FormField
                     control={form.control}
