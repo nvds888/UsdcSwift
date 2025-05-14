@@ -1070,10 +1070,12 @@ export async function claimFromEscrowWithCompiledTeal({
       
       if (!hasOptedIn) {
         console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
-        // Use a specific error type that can be caught and handled properly in the API
+        
+        // Return a specific error for opt-in requirement
         const error = new Error("USDC_OPT_IN_REQUIRED");
         (error as any).requiresOptIn = true;
         (error as any).assetId = USDC_ASSET_ID;
+        (error as any).address = validatedRecipient;
         throw error;
       }
       

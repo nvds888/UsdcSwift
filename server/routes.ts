@@ -369,10 +369,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Check if this is our specific USDC_OPT_IN_REQUIRED error
           if (error.message === "USDC_OPT_IN_REQUIRED") {
+            // Return a response that the frontend can use to guide the user to opt in
             return res.status(400).json({
               message: "Recipient not opted in to USDC",
               requiresOptIn: true,
-              assetId: USDC_ASSET_ID
+              assetId: USDC_ASSET_ID,
+              address: error.address || validatedData.recipientAddress,
+              errorCode: "USDC_OPT_IN_REQUIRED"
             });
           }
           
@@ -547,10 +550,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Check if this is our specific USDC_OPT_IN_REQUIRED error
           if (error.message === "USDC_OPT_IN_REQUIRED") {
+            // Return a response that the frontend can use to guide the user to opt in
             return res.status(400).json({
               message: "Sender not opted in to USDC",
               requiresOptIn: true,
-              assetId: USDC_ASSET_ID
+              assetId: USDC_ASSET_ID,
+              address: error.address || validatedData.senderAddress,
+              errorCode: "USDC_OPT_IN_REQUIRED"
             });
           }
           
