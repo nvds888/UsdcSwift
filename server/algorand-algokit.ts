@@ -148,9 +148,11 @@ export async function optInEscrowToUSDC(
     });
     
     // Create opt-in transaction using FromObject pattern for algosdk 3.2.0
+    // The key insight is that we must use 'sender' and 'receiver' parameter names
+    // rather than 'from' and 'to' to match the correct parameter names in algosdk 3.2.0
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: validatedEscrowAddress,
-      receiver: validatedEscrowAddress,
+      sender: validatedEscrowAddress,    // Sender must be a string
+      receiver: validatedEscrowAddress,  // Receiver must be a string
       amount: 0,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params,
@@ -324,9 +326,13 @@ export async function prepareCompleteEscrowDeployment(
     }
 
     // Transaction 2: Opt escrow into USDC
+    // For ASA opt-in, we use makeAssetTransferTxnWithSuggestedParamsFromObject
+    const escrowAddrStr = ensureAddressString(escrowAddress);
+    console.log("Creating opt-in transaction with verified address:", escrowAddrStr);
+    
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: ensureAddressString(escrowAddress),
-      to: ensureAddressString(escrowAddress),
+      sender: escrowAddrStr,     // Note: using 'sender' parameter (not 'from')
+      receiver: escrowAddrStr,   // Note: using 'receiver' parameter (not 'to')
       amount: 0,
       assetIndex: USDC_ASSET_ID,
       suggestedParams: params,
@@ -337,10 +343,12 @@ export async function prepareCompleteEscrowDeployment(
 
     // Transaction 3: Send USDC to escrow
     const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
+    console.log("Creating USDC transfer transaction with amount:", microAmount);
+    
     const assetTransferTxn =
       algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-        from: validatedSender,
-        to: ensureAddressString(escrowAddress),
+        sender: validatedSender,         // Note: using 'sender' parameter (not 'from')
+        receiver: escrowAddrStr,         // Note: using 'receiver' parameter (not 'to')
         amount: microAmount,
         assetIndex: USDC_ASSET_ID,
         suggestedParams: params,
@@ -437,16 +445,13 @@ export async function prepareFundEscrowTransaction(
     // Create asset transfer transaction
     console.log("Creating USDC asset transfer transaction");
 
-    // Create asset transfer transaction using the recommended maker function
+    // Create asset transfer transaction with the correct parameter names for algosdk 3.2.0
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedSender,
-      to: validatedEscrow,
-      closeRemainderTo: undefined,
-      revocationTarget: undefined,
+      sender: validatedSender,           // Correct: 'sender' not 'from'
+      receiver: validatedEscrow,         // Correct: 'receiver' not 'to'
       amount: microAmount,
-      note: undefined,
       assetIndex: USDC_ASSET_ID,
-      suggestedParams: params,
+      suggestedParams: params
     });
 
     console.log("Transaction created successfully with ID:", txn.txID());
@@ -514,10 +519,8 @@ export async function claimFromEscrow(
       `Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`,
     );
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedEscrow,
-      to: validatedReceiver,
-      closeRemainderTo: undefined,
-      revocationTarget: undefined,
+      sender: validatedEscrow,           // Correct: 'sender' not 'from'  
+      receiver: validatedReceiver,       // Correct: 'receiver' not 'to'
       amount: microAmount,
       note: Buffer.from(claimToken),
       assetIndex: USDC_ASSET_ID,
