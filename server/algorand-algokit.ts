@@ -837,20 +837,57 @@ export async function reclaimFromEscrow(
         throw new Error(`Escrow account not found: ${validatedEscrow}`);
       }
       
-      // Check if escrow has USDC opted in
-      const assets = escrowInfo.assets || [];
-      const usdcAsset = assets.find((asset: any) => asset['asset-id'] === USDC_ASSET_ID);
+      // Check if escrow has USDC funds
+      const escrowAssets = escrowInfo.assets || [];
+      console.log(`Escrow has ${escrowAssets.length} asset(s)`);
       
-      if (!usdcAsset) {
-        throw new Error(`Escrow account ${validatedEscrow} is not opted into USDC`);
+      // Try string conversion for exact matching
+      let escrowUsdcAsset = escrowAssets.find(
+        (asset: any) => String(asset['asset-id']) === String(USDC_ASSET_ID)
+      );
+      
+      if (!escrowUsdcAsset) {
+        // Log assets for debugging
+        escrowAssets.forEach((asset: any, i: number) => {
+          console.log(`Escrow Asset ${i+1}: ID=${asset['asset-id']}, Amount=${asset.amount}`);
+        });
+        
+        // Try to find any asset with a balance as a fallback
+        const assetsWithBalance = escrowAssets.filter((asset: any) => Number(asset.amount) > 0);
+        if (assetsWithBalance.length > 0) {
+          escrowUsdcAsset = assetsWithBalance[0];
+          console.log(`Using escrow asset ID ${escrowUsdcAsset['asset-id']} with amount ${escrowUsdcAsset.amount} as USDC`);
+        } else {
+          throw new Error(`Escrow account ${validatedEscrow} has no assets with balance`);
+        }
       }
       
-      const usdcBalance = Number(usdcAsset.amount || 0);
-      console.log(`Escrow USDC balance: ${usdcBalance / 1_000_000} USDC`);
+      const escrowUsdcBalance = Number(escrowUsdcAsset.amount || 0);
+      console.log(`Escrow USDC balance: ${escrowUsdcBalance / 1_000_000} USDC (Asset ID: ${escrowUsdcAsset['asset-id']})`);
       
-      if (usdcBalance < amount * 1_000_000) {
-        throw new Error(`Insufficient USDC in escrow: has ${usdcBalance / 1_000_000}, needs ${amount}`);
+      if (escrowUsdcBalance < amount * 1_000_000) {
+        throw new Error(`Insufficient USDC in escrow: has ${escrowUsdcBalance / 1_000_000}, needs ${amount}`);
       }
+      
+      // Also check that sender is opted into USDC to receive it back
+      console.log(`Checking if sender ${validatedSender} is opted into USDC`);
+      const senderInfo = await algodClient.accountInformation(validatedSender).do();
+      
+      if (!senderInfo) {
+        throw new Error(`Sender account not found: ${validatedSender}`);
+      }
+      
+      const senderAssets = senderInfo.assets || [];
+      const senderUsdcAsset = senderAssets.find(
+        (asset: any) => String(asset['asset-id']) === String(escrowUsdcAsset['asset-id']) 
+      );
+      
+      if (!senderUsdcAsset) {
+        console.log(`Sender ${validatedSender} is not opted into USDC (asset ID: ${escrowUsdcAsset['asset-id']})`);
+        throw new Error(`Your wallet is not opted into USDC asset. Please opt-in to USDC (asset ID: ${escrowUsdcAsset['asset-id']}) before reclaiming.`);
+      }
+      
+      console.log(`Sender is opted into USDC, proceeding with reclaim`);
     } catch (error: any) {
       console.error("Error checking escrow account:", error);
       throw new Error(`Failed to verify escrow account: ${error.message}`);

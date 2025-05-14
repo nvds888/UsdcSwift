@@ -22,6 +22,7 @@ import {
   optInEscrowToUSDC,
   executeClaimTransaction
 } from "./algorand-algokit";
+import { USDC_ASSET_ID } from "../client/src/lib/constants";
 import { sendClaimEmail } from "./email";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -355,9 +356,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           transactionId: txId,
           success: true
         });
-      } catch (txError) {
+      } catch (txError: any) {
         console.error("Error creating claim transaction:", txError);
-        return res.status(500).json({ message: "Failed to create claim transaction" });
+        
+        // Check if this is an opt-in error
+        const errorMessage = txError.message || "Unknown error";
+        if (errorMessage.includes("not opted into USDC") || errorMessage.includes("Please opt-in")) {
+          return res.status(400).json({ 
+            message: "Recipient not opted in",
+            error: errorMessage,
+            requiresOptIn: true,
+            assetId: USDC_ASSET_ID
+          });
+        }
+        
+        return res.status(500).json({ 
+          message: "Failed to create claim transaction", 
+          error: errorMessage
+        });
       }
     } catch (error) {
       console.error("Error claiming transaction:", error);
@@ -488,8 +504,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           success: true,
           transactionId: txId
         });
-      } catch (reclaimError) {
+      } catch (reclaimError: any) {
         console.error("Error executing reclaim transaction:", reclaimError);
+        
+        // Check if this is an opt-in error
+        const errorMessage = reclaimError.message || "Unknown error";
+        if (errorMessage.includes("not opted into USDC") || errorMessage.includes("Please opt-in")) {
+          return res.status(400).json({ 
+            message: "Sender not opted in",
+            error: errorMessage,
+            requiresOptIn: true,
+            assetId: USDC_ASSET_ID
+          });
+        }
+        
         return res.status(400).json({
           message: "Failed to execute reclaim transaction",
           error: reclaimError instanceof Error ? reclaimError.message : String(reclaimError)
