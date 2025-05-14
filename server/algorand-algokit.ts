@@ -1068,12 +1068,14 @@ export async function claimFromEscrowWithCompiledTeal({
   escrowAddress,
   recipientAddress,
   amount,
-  compiledTealProgram
+  compiledTealProgram,
+  tealSource
 }: {
   escrowAddress: string;
   recipientAddress: string;
   amount: number;
   compiledTealProgram: string; // Base64 encoded compiled TEAL program
+  tealSource?: string; // Original TEAL source code (optional but preferred)
 }): Promise<string> {
   try {
     console.log(`Creating claim transaction from escrow ${escrowAddress} to recipient ${recipientAddress} using stored compiled program`);
@@ -1125,19 +1127,56 @@ export async function claimFromEscrowWithCompiledTeal({
       throw new Error(`Failed to verify accounts: ${error?.message || String(error)}`);
     }
     
-    // Create LogicSig from the stored compiled program
-    console.log("Creating LogicSig from stored compiled program");
-    const logicSig = new algosdk.LogicSigAccount(
-      new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
-    );
+    // Create LogicSig preferring to recompile from source if available
+    let logicSig: algosdk.LogicSigAccount;
     
-    // Instead of verifying the generated address, we'll simply log it for debugging
-    // but we'll use the stored escrow address from the database
+    if (tealSource) {
+      // If we have the original TEAL source, recompile it to ensure exact match
+      console.log("Using original TEAL source to recreate LogicSig");
+      try {
+        const compileResponse = await algodClient.compile(tealSource).do();
+        const recompiledProgram = new Uint8Array(
+          Buffer.from(compileResponse.result, "base64")
+        );
+        logicSig = new algosdk.LogicSigAccount(recompiledProgram);
+        
+        // Verify the recompiled program produces the expected address
+        const recompiledAddress = logicSig.address();
+        const encodedRecompiledAddress = algosdk.encodeAddress(recompiledAddress.publicKey);
+        
+        console.log(`Recompiled TEAL produced address: ${encodedRecompiledAddress}`);
+        console.log(`Expected escrow address: ${validatedEscrow}`);
+        
+        if (encodedRecompiledAddress !== validatedEscrow) {
+          console.warn(`Warning: Recompiled program produced different address than expected: ${encodedRecompiledAddress} vs ${validatedEscrow}`);
+          console.warn("Will try using stored compiled program instead");
+          // Fall back to stored compiled program
+          logicSig = new algosdk.LogicSigAccount(
+            new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+          );
+        }
+      } catch (error) {
+        console.error("Error recompiling TEAL source:", error);
+        console.log("Falling back to stored compiled program");
+        // Fall back to stored compiled program
+        logicSig = new algosdk.LogicSigAccount(
+          new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+        );
+      }
+    } else {
+      // Create LogicSig from the stored compiled program
+      console.log("Creating LogicSig from stored compiled program (no source available)");
+      logicSig = new algosdk.LogicSigAccount(
+        new Uint8Array(Buffer.from(compiledTealProgram, 'base64'))
+      );
+    }
+    
+    // Log the generated address for debugging
     const generatedAddress = logicSig.address();
     const encodedGeneratedAddress = algosdk.encodeAddress(generatedAddress.publicKey);
     
-    console.log(`For debugging: Generated address from LogicSig is ${encodedGeneratedAddress}`);
-    console.log(`Using stored escrow address from database: ${validatedEscrow}`);
+    console.log(`Using LogicSig with address: ${encodedGeneratedAddress}`);
+    console.log(`Target escrow address: ${validatedEscrow}`);
     
     // We trust the escrow address stored in the database as the correct one
     // No verification needed - this address was already used to fund the escrow

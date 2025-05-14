@@ -377,7 +377,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.recipientAddress,
             amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram
+            compiledTealProgram: transaction.compiledTealProgram,
+            tealSource: transaction.tealSource // Pass the TEAL source if available
           });
           console.log(`Claim successful with txId: ${txId}`);
         } catch (error: any) {
@@ -558,7 +559,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             escrowAddress: transaction.smartContractAddress,
             recipientAddress: validatedData.senderAddress,
             amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram
+            compiledTealProgram: transaction.compiledTealProgram,
+            tealSource: transaction.tealSource // Pass the TEAL source if available
           });
           console.log(`Reclaim successful with txId: ${txId}`);
         } catch (error: any) {
