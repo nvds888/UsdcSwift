@@ -240,40 +240,18 @@ export async function prepareCompleteEscrowDeployment(
     throw new Error(`Invalid amount: ${amount}. Amount must be greater than 0.`);
   }
   
+  // Validate sender address format
+  try {
+    algosdk.decodeAddress(senderAddress);
+  } catch (error) {
+    throw new Error(`Invalid sender address: ${senderAddress}`);
+  }
+  
   try {
     // Step 1: Create the escrow account
     const { escrowAddress, logicSignature } = await createEscrowAccount(senderAddress);
     
-    // Ensure we have a valid escrow address string
-    let escrowAddressStr = escrowAddress;
-    
-    // Validate the escrow address
-    if (!escrowAddressStr || typeof escrowAddressStr !== 'string') {
-      console.log("Converting escrow address to string...");
-      try {
-        // If it's an object with publicKey, try to encode it
-        if (typeof escrowAddress === 'object' && escrowAddress !== null && 'publicKey' in escrowAddress) {
-          escrowAddressStr = algosdk.encodeAddress(escrowAddress.publicKey);
-          console.log("Successfully converted escrow address to string:", escrowAddressStr);
-        } else {
-          throw new Error("Cannot convert escrow address: unexpected format");
-        }
-      } catch (error) {
-        console.error("Error converting escrow address:", error);
-        throw new Error(`Failed to convert escrow address: ${JSON.stringify(escrowAddress)}`);
-      }
-    }
-    
-    // Double check address validity
-    try {
-      algosdk.decodeAddress(escrowAddressStr);
-      console.log("Verified escrowAddressStr is a valid address");
-    } catch (error) {
-      console.error("Invalid escrow address:", error);
-      throw new Error("escrowAddressStr is not a valid Algorand address");
-    }
-    
-    console.log(`Created escrow account at address: ${escrowAddressStr}`);
+    console.log(`Created escrow account at address: ${escrowAddress}`);
     
     // Step 2: Get suggested transaction parameters
     const params = await algodClient.getTransactionParams().do();
@@ -300,13 +278,13 @@ export async function prepareCompleteEscrowDeployment(
     // Log transaction details for debugging
     console.log('Creating funding transaction with:', {
       from: senderAddress,
-      to: escrowAddressStr,
+      to: escrowAddress,
       amount: minBalance
     });
     
     const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       from: senderAddress,
-      to: escrowAddressStr,
+      to: escrowAddress,
       amount: minBalance,
       suggestedParams: params
     });
