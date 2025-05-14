@@ -19,7 +19,8 @@ import {
   claimFromEscrow,
   reclaimFromEscrow,
   getUserBalance,
-  optInEscrowToUSDC
+  optInEscrowToUSDC,
+  executeClaimTransaction
 } from "./algorand-algokit";
 import { sendClaimEmail } from "./email";
 

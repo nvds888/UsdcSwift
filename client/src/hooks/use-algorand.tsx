@@ -318,32 +318,98 @@ export function useAlgorand() {
   const claimUsdc = async (params: ClaimUsdcParams): Promise<Transaction | null> => {
     setIsLoading(true);
     try {
-      // Get the transaction details and prepare the claim transaction
+      console.log("Starting claim process with params:", params);
+      
+      // Step 1: Get the transaction details and prepare the claim transaction
       const res = await apiRequest("POST", "/api/claim", params);
       const data = await res.json();
       
-      // Sign and submit the transaction if we have txParams
-      if (activeAccount && data.txParams && data.txParams.txnBase64) {
-        // Attempt to sign and submit the transaction with the wallet
-        const success = await signAndSubmitTransaction(
-          data.txParams.txnBase64,
-          data.id
-        );
-        
-        if (!success) {
-          toast({
-            title: "Warning",
-            description: "Unable to sign the claim transaction. Please try again."
-          });
-        }
+      if (!data.txParams || !data.txParams.txnBase64) {
+        console.error("No transaction parameters received from server");
+        toast({
+          title: "Error",
+          description: "Failed to prepare claim transaction",
+          variant: "destructive",
+        });
+        return null;
       }
       
-      toast({
-        title: "Success",
-        description: "USDC claimed successfully",
+      console.log("Received transaction data from server:", {
+        id: data.id,
+        escrowAddress: data.smartContractAddress,
+        hasParams: !!data.txParams
       });
       
-      return data;
+      // Step 2: Sign the transaction with the connected wallet
+      if (!activeAccount) {
+        toast({
+          title: "Error",
+          description: "No wallet connected. Please connect your wallet to claim USDC.",
+          variant: "destructive",
+        });
+        return null;
+      }
+      
+      try {
+        console.log("Preparing to sign transaction with wallet");
+        // Decode base64 transaction for signing
+        const txnToDecode = Buffer.from(data.txParams.txnBase64, 'base64');
+        const decodedTxn = algosdk.decodeUnsignedTransaction(txnToDecode);
+        
+        // Sign the transaction using the wallet
+        console.log("Requesting wallet to sign transaction");
+        const signedTxns = await signTransactions([txnToDecode]);
+        
+        if (!signedTxns || signedTxns.length === 0 || !signedTxns[0]) {
+          console.error("Failed to sign transaction with wallet");
+          toast({
+            title: "Error",
+            description: "Failed to sign the transaction with your wallet",
+            variant: "destructive",
+          });
+          return null;
+        }
+        
+        // Step 3: Submit the signed transaction to finalize the claim
+        console.log("Signed transaction successfully, submitting to network");
+        const submitResponse = await apiRequest("POST", "/api/submit-claim", {
+          signedTxn: Buffer.from(signedTxns[0]).toString('base64'),
+          claimToken: params.claimToken,
+          recipientAddress: params.recipientAddress
+        });
+        
+        if (!submitResponse.ok) {
+          const errorData = await submitResponse.json();
+          console.error("Error submitting claim transaction:", errorData);
+          toast({
+            title: "Error",
+            description: errorData.message || "Failed to submit claim transaction",
+            variant: "destructive",
+          });
+          return null;
+        }
+        
+        const finalResult = await submitResponse.json();
+        console.log("Claim transaction successful:", finalResult);
+        
+        // Invalidate transactions cache to update UI
+        queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+        
+        toast({
+          title: "Success",
+          description: "USDC claimed successfully and transferred to your wallet!",
+        });
+        
+        return finalResult.transaction;
+      } catch (walletError) {
+        console.error("Wallet error during claim process:", walletError);
+        toast({
+          title: "Wallet Error",
+          description: walletError instanceof Error ? walletError.message : "Error communicating with wallet",
+          variant: "destructive",
+        });
+        return null;
+      }
     } catch (error) {
       console.error("Error claiming USDC:", error);
       toast({
