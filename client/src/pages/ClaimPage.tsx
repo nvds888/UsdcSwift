@@ -15,7 +15,7 @@ const ClaimPage: React.FC = () => {
   const [, navigate] = useLocation();
   const [, params] = useRoute("/claim/:token");
   const { toast } = useToast();
-  const { activeAccount } = useWallet();
+  const { activeAccount, wallets } = useWallet();
   const { claimUsdc, isLoading } = useAlgorand();
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
@@ -297,7 +297,7 @@ const ClaimPage: React.FC = () => {
       <WalletModal 
         isOpen={isWalletModalOpen} 
         onClose={() => setIsWalletModalOpen(false)} 
-        wallets={useWallet().wallets}
+        wallets={wallets}
       />
     </main>
   );

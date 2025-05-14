@@ -159,9 +159,6 @@ export function useAlgorand() {
       if (transferResponseData.status === 'funded') {
         console.log("All transactions completed successfully, escrow is funded with USDC");
         
-        // Update transaction in original transaction data
-        initialTransaction.status = transferResponseData.status;
-        
         // Invalidate transaction queries to force a refresh
         queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       }
