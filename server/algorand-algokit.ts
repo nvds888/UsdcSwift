@@ -584,7 +584,7 @@ export async function claimFromEscrow(
   },
 ): Promise<string> {
   try {
-    const { escrowAddress, recipientAddress, amount, claimToken, tealSource } = params;
+    const { escrowAddress, recipientAddress, amount, claimToken } = params;
 
     // Validate addresses
     const validatedEscrow = ensureAddressString(escrowAddress);
@@ -592,65 +592,114 @@ export async function claimFromEscrow(
 
     console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
     
-    // Create TEAL program for the escrow
-    // We'll use a much simpler program that only checks asset ID
-    const simpleProgram = `#pragma version 6
-// Check if transaction type is AssetTransfer
-txn TypeEnum
-int 4
+    try {
+      // First, get transaction parameters
+      const txParams = await algodClient.getTransactionParams().do();
+      console.log("Got network parameters for claim");
+
+      // Convert USDC amount to micro-USDC (assuming 6 decimal places)
+      const microAmount = Math.floor(amount * 1_000_000);
+      console.log(`Preparing to claim ${microAmount} microUSDC (${amount} USDC)`);
+
+      // Look up the escrow account to get its original sender (funded by)
+      console.log("Looking up escrow account information");
+      const escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
+      const createdBy = escrowInfo['created-by'] ? escrowInfo['created-by'].address : undefined;
+      console.log(`Escrow created by: ${createdBy || 'unknown'}`);
+
+      // Create TEAL program for the escrow
+      // We'll use the sender address + salt for authenticity
+      console.log("Creating escrow TEAL program");
+      const escrowProgram = createEscrowTEAL(createdBy || validatedEscrow, claimToken);
+
+      // Compile the TEAL program
+      console.log("Compiling escrow TEAL program");
+      const compiledProgram = await algodClient.compile(escrowProgram).do();
+      const programBytes = new Uint8Array(
+        Buffer.from(compiledProgram.result, "base64"),
+      );
+
+      // Create LogicSigAccount
+      console.log("Creating LogicSigAccount from compiled program");
+      let logicSignature = new algosdk.LogicSigAccount(programBytes);
+      
+      // Verify the LogicSig address
+      const lsigAddress = logicSignature.address();
+      console.log(`LogicSig generated address: ${lsigAddress}`);
+      
+      // If the addresses don't match, try to recreate using different parameters
+      if (ensureAddressString(lsigAddress) !== validatedEscrow) {
+        console.log("LogicSig address mismatch, trying with generic TEAL program");
+        
+        // Use a very simple TEAL program for this specific USDC transfer
+        const simpleProgram = `#pragma version 6
+// Approve all USDC transfers
+global GroupSize
+int 1
 ==
-// Check if the asset ID is USDC
+txn TypeEnum
+int 4 // AssetTransfer
+==
+&&
 txn XferAsset
 int ${USDC_ASSET_ID}
 ==
 &&
-// If both conditions are true, approve
+// Only approve if specific recipient
+txn AssetReceiver
+addr ${validatedReceiver}
+==
+&&
+// Only approve if specific amount
+txn AssetAmount
+int ${microAmount}
+==
+&&
 `;
+        
+        // Recompile with the simple program
+        console.log("Compiling simple TEAL program");
+        const simpleCompiled = await algodClient.compile(simpleProgram).do();
+        const simpleProgramBytes = new Uint8Array(
+          Buffer.from(simpleCompiled.result, "base64"),
+        );
+        
+        // Create a new LogicSigAccount
+        console.log("Creating new LogicSigAccount with simple program");
+        const simpleLsig = new algosdk.LogicSigAccount(simpleProgramBytes);
+        
+        // Check if this one matches
+        const simpleLsigAddress = simpleLsig.address();
+        console.log(`Simple LogicSig address: ${simpleLsigAddress}`);
+        
+        // If it doesn't match, we need to use someone who knows the correct TEAL program
+        if (ensureAddressString(simpleLsigAddress) !== validatedEscrow) {
+          console.log("Cannot recreate the correct TEAL program for escrow LogicSig");
+          throw new Error("Cannot recreate escrow account LogicSig - the account might have been created with a different TEAL program");
+        }
+        
+        // Use this LogicSig instead
+        console.log("Using simple LogicSig program");
+        logicSignature = simpleLsig;
+      }
 
-    // Compile the TEAL program
-    console.log("Compiling TEAL program for escrow");
-    let compiledProgram;
-    try {
-      compiledProgram = await algodClient.compile(simpleProgram).do();
-    } catch (error: any) {
-      console.error("Error compiling TEAL program:", error);
-      throw new Error(`Failed to compile escrow TEAL program: ${error.message}`);
-    }
-    
-    const programBytes = new Uint8Array(
-      Buffer.from(compiledProgram.result, "base64"),
-    );
+      // Create the transaction
+      console.log(`Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`);
+      const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        sender: validatedEscrow,
+        receiver: validatedReceiver,
+        amount: microAmount,
+        note: Buffer.from(claimToken),
+        assetIndex: USDC_ASSET_ID,
+        suggestedParams: txParams,
+      });
 
-    // Create LogicSigAccount
-    console.log("Creating LogicSigAccount");
-    const logicSignature = new algosdk.LogicSigAccount(programBytes);
-    
-    // Get transaction parameters
-    const txParams = await algodClient.getTransactionParams().do();
-    console.log("Got network parameters for claim");
-
-    // Convert USDC amount to micro-USDC (assuming 6 decimal places)
-    const microAmount = Math.floor(amount * 1_000_000);
-    console.log(`Preparing to claim ${microAmount} microUSDC (${amount} USDC)`);
-
-    // Create the transaction
-    console.log(`Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`);
-    const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: validatedEscrow,
-      receiver: validatedReceiver,
-      amount: microAmount,
-      note: Buffer.from(claimToken),
-      assetIndex: USDC_ASSET_ID,
-      suggestedParams: txParams,
-    });
-
-    // Sign the transaction with the logic signature
-    console.log("Signing transaction with logic signature");
-    const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
-    
-    // Submit the transaction to the network
-    console.log("Submitting signed transaction to Algorand network");
-    try {
+      // Sign the transaction with the logic signature
+      console.log("Signing transaction with logic signature");
+      const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+      
+      // Submit the transaction to the network
+      console.log("Submitting signed transaction to Algorand network");
       const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
       
       // Wait for confirmation
@@ -661,8 +710,8 @@ int ${USDC_ASSET_ID}
       
       return transactionId;
     } catch (error: any) {
-      console.error("Error submitting transaction:", error);
-      throw new Error(`Failed to submit claim transaction: ${error.message || JSON.stringify(error)}`);
+      console.error("Error in transaction process:", error);
+      throw new Error(`Transaction error: ${error.message || JSON.stringify(error)}`);
     }
   } catch (error: any) {
     console.error("Error in claim process:", error);
