@@ -42,7 +42,8 @@ export interface SignedTransactionParams {
 }
 
 export interface TransactionParams {
-  txnBase64?: string;
+  txnBase64?: string;       // Single transaction (legacy format)
+  txnsBase64?: string[];    // Array of transactions (new atomic format)
   senderAddress?: string;
   escrowAddress: string;
   recipientAddress?: string;

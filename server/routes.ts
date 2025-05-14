@@ -128,13 +128,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Sender address is required" });
       }
       
-      // Create escrow account
-      console.log("Creating escrow account for sender address:", validatedData.senderAddress);
-      const { escrowAddress, claimToken, logicSignature } = await createEscrowAccount(
-        validatedData.senderAddress
-      );
+      // Generate a unique claim token
+      const claimToken = uuidv4();
+      console.log("Generated claim token:", claimToken);
       
-      console.log("Created escrow with address:", escrowAddress, "and claimToken:", claimToken);
+      // Prepare the complete escrow deployment (atomic transaction)
+      console.log("Preparing complete escrow deployment with atomic transactions...");
+      let deploymentResult;
+      
+      try {
+        // This creates an atomic transaction that:
+        // 1. Creates and funds escrow account
+        // 2. Opts it into USDC
+        // 3. Transfers USDC to it
+        deploymentResult = await prepareCompleteEscrowDeployment(
+          validatedData.senderAddress,
+          parseFloat(validatedData.amount)
+        );
+        
+        console.log("Created escrow deployment with address:", deploymentResult.escrowAddress);
+      } catch (error) {
+        console.error("Error preparing escrow deployment:", error);
+        return res.status(500).json({ 
+          message: "Failed to prepare escrow deployment", 
+          error: error && typeof error === 'object' && 'message' in error && 
+            typeof error.message === 'string' ? error.message : "Unknown error"
+        });
+      }
+      
+      const { escrowAddress, unsignedTxns } = deploymentResult;
       
       // Store transaction in database
       const transaction = await storage.createTransaction({
@@ -148,83 +170,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log("Stored transaction with id:", transaction.id);
       
-      // Try to opt the escrow account into USDC
+      // Encode the transactions to base64 for sending to frontend
+      let txnsBase64: string[] = [];
       try {
-        console.log("Attempting to opt the escrow account into USDC...");
-        await optInEscrowToUSDC(escrowAddress, logicSignature);
-        console.log("Successfully opted escrow account into USDC");
-      } catch (optInError) {
-        console.warn("Error during USDC opt-in:", optInError);
-        console.log("Will continue anyway - escrow account might already be opted in");
-        // Continue anyway - the error might be that the account is already opted in
-      }
-      
-      // Prepare the transaction for the frontend to sign
-      // This creates the actual transaction object that will be signed by the user's wallet
-      console.log("Preparing fund escrow transaction with sender:", validatedData.senderAddress, 
-                 "escrow:", escrowAddress, "amount:", validatedData.amount);
-      
-      // Verify addresses are valid before passing to function
-      console.log("Verifying addresses...");
-      try {
-        algosdk.decodeAddress(validatedData.senderAddress);
-        algosdk.decodeAddress(escrowAddress);
-        console.log("Both addresses successfully verified");
-      } catch (error) {
-        console.error("Invalid address format:", error);
-        return res.status(400).json({ message: "Invalid address format" });
-      }
-      
-      console.log("Both addresses valid, calling prepareFundEscrowTransaction");
-      let txnParams;
-      try {
-        txnParams = await prepareFundEscrowTransaction(
-          validatedData.senderAddress,
-          escrowAddress,
-          parseFloat(validatedData.amount)
-        );
-      } catch (error) {
-        console.error("Error preparing transaction:", error);
-        // Special handling for escrow not opted in
-        if (error && typeof error === 'object' && 'message' in error && 
-            typeof error.message === 'string' && error.message.includes("not opted into USDC")) {
-          return res.status(400).json({
-            message: "Escrow account not opted into USDC",
-            needsOptIn: true,
-            details: {
-              sender: validatedData.senderAddress,
-              escrow: escrowAddress,
-              amount: parseFloat(validatedData.amount)
-            }
-          });
-        }
-        
-        return res.status(500).json({ 
-          message: "Failed to prepare transaction", 
-          error: error && typeof error === 'object' && 'message' in error && 
-            typeof error.message === 'string' ? error.message : "Unknown error",
-          details: {
-            sender: validatedData.senderAddress,
-            escrow: escrowAddress,
-            amount: parseFloat(validatedData.amount)
-          }
+        console.log(`Encoding ${unsignedTxns.length} transactions to base64`);
+        unsignedTxns.forEach((txn, i) => {
+          txnsBase64.push(Buffer.from(txn).toString('base64'));
+          console.log(`Encoded transaction ${i+1}`);
         });
-      }
-      
-      // Encode the transaction to base64 for sending to frontend
-      let txnBase64;
-      try {
-        txnBase64 = Buffer.from(
-          txnParams.txn.toByte()
-        ).toString("base64");
       } catch (error) {
-        console.error("Error encoding transaction:", error);
-        return res.status(500).json({ message: "Failed to encode transaction" });
+        console.error("Error encoding transactions:", error);
+        return res.status(500).json({ message: "Failed to encode transactions" });
       }
       
       // Create transaction parameters for the frontend
       const txParams = {
-        txnBase64,
+        txnsBase64,  // Now array of base64 encoded transactions
         senderAddress: validatedData.senderAddress,
         escrowAddress: escrowAddress,
         amount: parseFloat(validatedData.amount)
