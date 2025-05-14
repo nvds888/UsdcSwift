@@ -279,14 +279,16 @@ export async function prepareCompleteEscrowDeployment(
     // Step 2: Get suggested transaction parameters
     const params = await algodClient.getTransactionParams().do();
 
-    // Make sure we extract the correct fields
-    // Handle BigInt serialization - convert any BigInt values to Number or String
-    const safeParams = { ...params };
-    for (const key in safeParams) {
-      if (typeof safeParams[key] === "bigint") {
-        safeParams[key] = Number(safeParams[key]);
-      }
-    }
+    // Create a new parameters object for use in transactions
+    // This avoids TypeScript errors when accessing dynamic properties
+    const safeParams: algosdk.SuggestedParams = {
+      flatFee: params.flatFee,
+      fee: params.fee,
+      firstRound: params.firstRound,
+      lastRound: params.lastRound,
+      genesisID: params.genesisID,
+      genesisHash: params.genesisHash
+    };
 
     console.log("Suggested params:", JSON.stringify(safeParams, null, 2));
 
