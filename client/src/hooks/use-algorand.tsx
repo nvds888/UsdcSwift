@@ -288,20 +288,21 @@ export function useAlgorand() {
       // Convert to an Algorand transaction object
       const txn = algosdk.decodeUnsignedTransaction(txnBytes);
       
-      // Sign the transaction with the wallet
-      const singleTxnGroups = [{
-        txn: txn,
-        signers: [activeAccount.address]
-      }];
+      // Convert the transaction to the expected format for the wallet
+      // Some wallets expect the transaction to be encoded in a specific way
+      const encodedTxn = algosdk.encodeUnsignedTransaction(txn);
       
-      const signedTransactions = await signTransactions(singleTxnGroups);
+      // Sign the transaction with the wallet - pass the binary transaction
+      const signedTransactions = await signTransactions([encodedTxn]);
       
       if (!signedTransactions || signedTransactions.length === 0) {
         throw new Error("Failed to sign transaction");
       }
       
       // The wallet should return a signed transaction Uint8Array that we need to convert to base64
-      const signedTxnBase64 = Buffer.from(signedTransactions[0] || new Uint8Array()).toString('base64');
+      // Handle the case where signedTransactions[0] might be null
+      const signedTxn = signedTransactions[0] || new Uint8Array();
+      const signedTxnBase64 = Buffer.from(signedTxn).toString('base64');
       
       const result = await submitSignedTransaction({
         signedTxn: signedTxnBase64,

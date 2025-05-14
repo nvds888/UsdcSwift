@@ -234,16 +234,17 @@ export async function getUserBalance(address: string): Promise<number> {
     // Debug output - log the assets and what we're looking for
     console.log(`Looking for USDC Asset ID: ${USDC_ASSET_ID} in account ${address}`);
     
-    if (!accountInfo.assets) {
+    const assets = accountInfo.assets || [];
+    if (assets.length === 0) {
       console.log("No assets found in account");
       return 0;
     }
     
     // Log all assets to help debug
-    console.log("Assets in account:", JSON.stringify(accountInfo.assets.map((a: any) => ({ id: a["asset-id"], amount: a.amount }))));
+    console.log("Assets in account:", JSON.stringify(assets.map((a: any) => ({ id: a["asset-id"], amount: a.amount }))));
     
     // Look for USDC in assets array
-    const usdcAsset = accountInfo.assets.find(
+    const usdcAsset = assets.find(
       (asset: any) => asset["asset-id"] === USDC_ASSET_ID
     );
     
@@ -254,7 +255,7 @@ export async function getUserBalance(address: string): Promise<number> {
     }
     
     // Return the balance converted from micro-USDC
-    const balance = usdcAsset.amount / 1_000_000;
+    const balance = Number(usdcAsset.amount) / 1_000_000;
     console.log(`Found USDC balance: ${balance}`);
     return balance;
   } catch (error) {
