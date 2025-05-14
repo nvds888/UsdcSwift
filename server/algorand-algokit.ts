@@ -29,7 +29,9 @@ const algorandClient = algokit.getAlgoClient({
  */
 function extractTransactionId(response: any): string {
   // Handle different property names in different algosdk versions
-  return response.txId || response.txid;
+  const transactionId = response.txId || response.txid;
+  console.log(`Transaction submitted successfully: ${transactionId}`);
+  return transactionId;
 }
 
 /**
