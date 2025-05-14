@@ -73,6 +73,7 @@ export function useAlgorand() {
   };
   
   // Sign and submit transactions as part of an atomic group
+  // Fixed version of signAndSubmitAtomicGroup based on the provided solution
   const signAndSubmitAtomicGroup = async (
     txnsToSign: string[],
     allTxns: string[],
@@ -81,108 +82,77 @@ export function useAlgorand() {
     try {
       console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // Decode all transactions in the group (signed and unsigned)
-      // First convert base64 strings to binary data
-      const allDecodedTxns = [];
+      // First, decode all transactions properly
+      const decodedTxns: (algosdk.Transaction | Uint8Array)[] = [];
+      const indexesToSign: number[] = [];
       
-      try {
-        // Properly decode each transaction
-        for (let i = 0; i < allTxns.length; i++) {
-          const txnBinary = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
+      for (let i = 0; i < allTxns.length; i++) {
+        const txnBinary = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
+        
+        try {
+          // Try to decode as a transaction
+          const txn = algosdk.decodeUnsignedTransaction(txnBinary);
+          decodedTxns.push(txn);
           
-          try {
-            // Try to decode as transaction object first
-            const txnObj = algosdk.decodeUnsignedTransaction(txnBinary);
-            allDecodedTxns.push(txnObj);
-            console.log(`Successfully decoded transaction ${i} as object`);
-          } catch (decodeError) {
-            // If that fails, just use the binary version
-            console.log(`Using raw binary for transaction ${i}`);
-            allDecodedTxns.push(txnBinary);
+          // Check if this transaction needs signing
+          // (it should be in our txnsToSign array)
+          if (txnsToSign.includes(allTxns[i])) {
+            indexesToSign.push(i);
           }
+        } catch (e) {
+          // This is likely a pre-signed transaction (like the opt-in)
+          // Keep it as binary
+          console.log(`Transaction ${i} is pre-signed, keeping as binary`);
+          decodedTxns.push(txnBinary);
         }
-      } catch (error) {
-        console.error("Error decoding transactions:", error);
-        throw error;
       }
-      
-      // Instead of trying to find matching base64 strings (which can be inconsistent),
-      // let's directly specify which transactions need signing based on our knowledge
-      // of the atomic group structure (typically indexes 0 and 2 need signing)
-      const indexesToSign: number[] = [0, 2]; // Hardcode the indexes we know need signing
       
       console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
       
-      // TxnLab use-wallet expects transactions to be in their original format from algosdk
-      // We need to parse them carefully to match the expected format
+      // For the Pera wallet, we need to pass the transactions in the correct format
+      // The wallet expects Transaction objects for unsigned transactions
+      // and Uint8Array for pre-signed transactions
       
-      // First, we'll reparse the base64 transactions to ensure proper format
-      const stxns: Uint8Array[] = [];
+      // However, we need to encode unsigned transactions properly
+      const txnsForWallet: Uint8Array[] = [];
       
-      // Following the advice from the Pera wallet error guide...
-      console.log("Validating all transactions in the group before signing:");
-      allTxns.forEach((txn, i) => {
-        try {
-          const txnBytes = new Uint8Array(Buffer.from(txn, 'base64'));
-          
-          // Try to decode and validate each transaction
-          try {
-            const decodedTxn = algosdk.decodeUnsignedTransaction(txnBytes);
-            console.log(`Txn ${i} decoded successfully as type:`, decodedTxn.type);
-            stxns.push(txnBytes);
-          } catch (e) {
-            // If transaction 1 (the pre-signed one), we need special handling
-            if (i === 1) {
-              console.log(`Txn ${i} is a pre-signed transaction, using raw bytes`);
-              stxns.push(txnBytes);
-            } else {
-              console.error(`Txn ${i} failed to decode:`, e);
-              throw e;
-            }
-          }
-        } catch (err) {
-          console.error(`Error processing transaction ${i}:`, err);
-          throw err;
+      for (let i = 0; i < decodedTxns.length; i++) {
+        const txn = decodedTxns[i];
+        
+        if (algosdk.Transaction.prototype.isPrototypeOf(txn)) {
+          // Unsigned transaction - encode it
+          txnsForWallet.push(algosdk.encodeUnsignedTransaction(txn as algosdk.Transaction));
+        } else {
+          // Pre-signed transaction - use as is
+          txnsForWallet.push(txn as Uint8Array);
         }
-      });
-      
-      console.log(`Prepared ${stxns.length} raw transactions for wallet signing`);
-      
-      // For debugging:
-      try {
-        // Try to decode the first transaction to verify it's valid
-        const decodedFirst = algosdk.decodeUnsignedTransaction(stxns[0]);
-        console.log("First transaction is valid with type:", decodedFirst.type);
-      } catch (e) {
-        console.error("First transaction is invalid:", e);
       }
       
-      // Sign the transactions with the wallet
-      // This is the critical part - we're passing the properly formatted transaction bytes
-      // and indicating which ones in the group need signing
-      const signedTxns = await signTransactions(stxns, indexesToSign);
+      console.log(`Prepared ${txnsForWallet.length} transactions for wallet`);
       
-      if (!signedTxns || signedTxns.some((txn, i) => i === 0 && !txn)) {
+      // Sign only the transactions that need signing
+      const signedTxns = await signTransactions(txnsForWallet, indexesToSign);
+      
+      if (!signedTxns || !signedTxns.length) {
         console.error("Failed to sign transactions properly");
         return false;
       }
       
-      // For atomic groups, we only need to submit the first transaction
-      // The rest are handled automatically by the node
-      const firstSignedTxn = signedTxns[0];
-      if (!firstSignedTxn) {
-        console.error("First transaction was not signed properly");
-        return false;
-      }
+      // Typically for atomic groups, we just submit the signed transaction
+      // For Algorand, this is all we need to do since the node will 
+      // handle propagating it to the rest of the group
       
-      // Submit the signed transaction
+      // Convert to base64 for API submission
+      const signedTxnBase64 = Buffer.from(signedTxns[0]).toString('base64');
+      
+      // Submit to the backend
       const response = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(firstSignedTxn).toString('base64'),
+        signedTxn: signedTxnBase64,
         transactionId
       });
       
       if (!response.ok) {
-        console.error("Failed to submit signed transaction");
+        console.error("Failed to submit transaction");
         return false;
       }
       

@@ -70,11 +70,15 @@ export function createEscrowTEAL(sender: string, salt: string = ''): string {
   // Ensure sender is a valid address string
   const senderAddr = ensureAddressString(sender);
   
-  // Add comment with salt to make each contract unique
-  const saltComment = salt ? `// Salt: ${salt}` : '';
-
+  // We need to actually include the salt in the program logic
+  // not just as a comment, to affect the compiled bytecode
+  
   return `#pragma version 8
-  ${saltComment}
+  // Salt: ${salt}
+  
+  // Include salt in contract logic as a byte array push/pop
+  byte "${salt}"
+  pop
 
   // Allow opt-in to USDC
   txn TypeEnum

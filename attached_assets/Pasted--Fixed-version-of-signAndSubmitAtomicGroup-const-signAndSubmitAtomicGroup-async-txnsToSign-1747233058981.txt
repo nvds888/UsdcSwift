@@ -1,0 +1,104 @@
+// Fixed version of signAndSubmitAtomicGroup
+const signAndSubmitAtomicGroup = async (
+  txnsToSign: string[],
+  allTxns: string[],
+  transactionId: number
+): Promise<boolean> => {
+  try {
+    console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
+    
+    // First, decode all transactions properly
+    const decodedTxns: (algosdk.Transaction | Uint8Array)[] = [];
+    const indexesToSign: number[] = [];
+    
+    for (let i = 0; i < allTxns.length; i++) {
+      const txnBinary = new Uint8Array(Buffer.from(allTxns[i], 'base64'));
+      
+      try {
+        // Try to decode as a transaction
+        const txn = algosdk.decodeUnsignedTransaction(txnBinary);
+        decodedTxns.push(txn);
+        
+        // Check if this transaction needs signing
+        // (it should be in our txnsToSign array)
+        if (txnsToSign.includes(allTxns[i])) {
+          indexesToSign.push(i);
+        }
+      } catch (e) {
+        // This is likely a pre-signed transaction (like the opt-in)
+        // Keep it as binary
+        console.log(`Transaction ${i} is pre-signed, keeping as binary`);
+        decodedTxns.push(txnBinary);
+      }
+    }
+    
+    console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
+    
+    // For the Pera wallet, we need to pass the transactions in the correct format
+    // The wallet expects Transaction objects for unsigned transactions
+    // and Uint8Array for pre-signed transactions
+    
+    // However, we need to encode unsigned transactions properly
+    const txnsForWallet: Uint8Array[] = [];
+    
+    for (let i = 0; i < decodedTxns.length; i++) {
+      const txn = decodedTxns[i];
+      
+      if (txn instanceof algosdk.Transaction) {
+        // Unsigned transaction - encode it
+        txnsForWallet.push(algosdk.encodeUnsignedTransaction(txn));
+      } else {
+        // Pre-signed transaction - use as is
+        txnsForWallet.push(txn);
+      }
+    }
+    
+    console.log(`Prepared ${txnsForWallet.length} transactions for wallet`);
+    
+    // Sign only the transactions that need signing
+    const signedTxns = await signTransactions(txnsForWallet, indexesToSign);
+    
+    if (!signedTxns || signedTxns.length !== allTxns.length) {
+      console.error("Failed to sign transactions properly");
+      return false;
+    }
+    
+    // Build the final transaction group with signed and pre-signed transactions
+    const finalTxns: Uint8Array[] = [];
+    
+    for (let i = 0; i < signedTxns.length; i++) {
+      if (indexesToSign.includes(i) && signedTxns[i]) {
+        // This was signed by the wallet
+        finalTxns.push(signedTxns[i]);
+      } else {
+        // This was pre-signed or doesn't need signing
+        finalTxns.push(txnsForWallet[i]);
+      }
+    }
+    
+    // Submit the atomic group
+    // For atomic groups, we typically submit all transactions together
+    const combinedTxns: Uint8Array[] = [];
+    
+    // Combine all transactions into a single submission
+    for (const txn of finalTxns) {
+      combinedTxns.push(txn);
+    }
+    
+    // Submit to the backend
+    const response = await apiRequest("POST", "/api/submit-atomic-group", {
+      signedTxns: combinedTxns.map(txn => Buffer.from(txn).toString('base64')),
+      transactionId
+    });
+    
+    if (!response.ok) {
+      console.error("Failed to submit atomic transaction group");
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Error in atomic transaction group signing:", error);
+    return false;
+  }
+};
