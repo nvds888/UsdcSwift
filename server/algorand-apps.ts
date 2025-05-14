@@ -69,14 +69,22 @@ export async function createClaimApp(
     
     // Generate a unique claim token
     const claimToken = uuidv4();
-    
-    // Read the template TEAL file
-    const templatePath = path.join(__dirname, 'algorand-app-template.teal');
-    let approvalProgramTemplate = fs.readFileSync(templatePath, 'utf8');
-    
-    // Generate a random recipient address if not provided (for creating the app)
-    // This will be updated after app creation for the actual recipient
-    const initialRecipient = recipientAddress || algosdk.generateAccount().addr;
+    // Create application
+    const txn = algosdk.makeApplicationCreateTxnFromObject({
+      from: senderAddr,
+      suggestedParams,
+      onComplete: algosdk.OnApplicationComplete.NoOpOC,
+      approvalProgram: compiledApprovalProgram,
+      clearProgram: compiledClearProgram,
+      numLocalInts: 0,
+      numLocalByteSlices: 0,
+      numGlobalInts: 0,
+      numGlobalByteSlices: 0,
+      appArgs: [],
+      accounts: [senderAddr, initialRecipient],
+      foreignApps: [],
+      foreignAssets: [USDC_ASSET_ID],
+    });
     
     // Replace template values
     approvalProgramTemplate = approvalProgramTemplate
@@ -198,10 +206,11 @@ export async function prepareAppFundingTransactions(
     };
   } catch (error) {
     console.error("Error preparing app funding transactions:", error);
-    throw new Error(`Failed to prepare app funding transactions: ${error.message}`);
+  } catch (error) {
+    const errorMsg = toErrorWithMessage(error);
+    console.error("Error preparing app funding transactions:", errorMsg.message);
+    throw new Error(`Failed to prepare app funding transactions: ${errorMsg.message}`);
   }
-}
-
 /**
  * Prepares a transaction to claim USDC from an app
  * 
@@ -226,12 +235,14 @@ export async function prepareClaimTransaction(
     
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
-    
-    // Calculate amount in micro USDC
-    const microAmount = Math.floor(amount * 1_000_000);
-    
-    // Create asset transfer transaction from app to recipient
-    const claimTxn = algosdk.makeAssetTransferTxnWithSuggestedParams(
+    const claimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: validatedAppAddress, // from app
+      to: validatedRecipientAddress, // to recipient
+      amount: microAmount, // amount
+      assetIndex: USDC_ASSET_ID, // USDC asset ID
+      note: new Uint8Array(0),
+      suggestedParams
+    });
       validatedAppAddress, // from app
       validatedRecipientAddress, // to recipient
       undefined, // close remainder to
@@ -241,8 +252,11 @@ export async function prepareClaimTransaction(
       USDC_ASSET_ID, // USDC asset ID
       suggestedParams
     );
-    
-    console.log("Claim transaction prepared successfully");
+  } catch (error) {
+    const errorMsg = toErrorWithMessage(error);
+    console.error("Error preparing claim transaction:", errorMsg.message);
+    throw new Error(`Failed to prepare claim transaction: ${errorMsg.message}`);
+  }
     
     return algosdk.encodeUnsignedTransaction(claimTxn);
   } catch (error) {
@@ -270,12 +284,14 @@ export async function prepareReclaimTransaction(
     console.log(`Preparing reclaim transaction for ${senderAddress} from app ${appId}`);
     
     // Validate addresses
-    const validatedAppAddress = ensureAddressString(appAddress);
-    const validatedSenderAddress = ensureAddressString(senderAddress);
-    
-    // Get suggested parameters
-    const suggestedParams = await algodClient.getTransactionParams().do();
-    
+    const reclaimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: validatedAppAddress, // from app
+      to: validatedSenderAddress, // to sender
+      amount: microAmount, // amount
+      assetIndex: USDC_ASSET_ID, // USDC asset ID
+      note: new Uint8Array(0),
+      suggestedParams
+    });
     // Calculate amount in micro USDC
     const microAmount = Math.floor(amount * 1_000_000);
     
@@ -287,8 +303,11 @@ export async function prepareReclaimTransaction(
       undefined, // revocation target
       microAmount, // amount
       new Uint8Array(0), // note
-      USDC_ASSET_ID, // USDC asset ID
-      suggestedParams
+  } catch (error) {
+    const errorMsg = toErrorWithMessage(error);
+    console.error("Error preparing reclaim transaction:", errorMsg.message);
+    throw new Error(`Failed to prepare reclaim transaction: ${errorMsg.message}`);
+  }
     );
     
     console.log("Reclaim transaction prepared successfully");
@@ -311,9 +330,11 @@ export async function submitTransaction(signedTxn: Uint8Array): Promise<string> 
     // Submit the transaction
     const response = await algodClient.sendRawTransaction(signedTxn).do();
     const txId = response.txId || response.txid;
-    
-    if (!txId) {
-      throw new Error("No transaction ID returned from the network");
+  } catch (error) {
+    const errorMsg = toErrorWithMessage(error);
+    console.error("Error submitting transaction:", errorMsg.message);
+    throw new Error(`Failed to submit transaction: ${errorMsg.message}`);
+  }
     }
     
     // Wait for confirmation
@@ -344,7 +365,7 @@ export async function getUsdcBalance(address: string): Promise<number> {
     
     // Look for USDC in the assets
     for (const asset of accountInfo.assets || []) {
-      if (asset['asset-id'] === USDC_ASSET_ID) {
+      if (asset['assetId'] === USDC_ASSET_ID) {
         return asset.amount / 1_000_000; // Convert micro USDC to USDC
       }
     }
@@ -356,8 +377,11 @@ export async function getUsdcBalance(address: string): Promise<number> {
   }
 }
 
-/**
- * Helper function to compile a TEAL program
+  } catch (error) {
+    const errorMsg = toErrorWithMessage(error);
+    console.error("Error compiling program:", errorMsg.message);
+    throw new Error(`Failed to compile program: ${errorMsg.message}`);
+  }
  * 
  * @param programSource The TEAL source code
  * @returns The compiled program bytes
@@ -387,7 +411,7 @@ async function calculateAppId(sender: string, round: number): Promise<number> {
   // For the demo, we're generating a predictable ID based on sender and timestamp
   // NOTE: This is not how real app IDs are calculated, just a placeholder
   const senderAccount = await algodClient.accountInformation(sender).do();
-  const createdApps = senderAccount['created-apps'] || [];
+  const createdApps = senderAccount['createdApps'] || [];
   return createdApps.length > 0 
     ? createdApps[createdApps.length - 1].id + 1 
     : 10000000 + Math.floor(Date.now() / 1000) % 1000000;

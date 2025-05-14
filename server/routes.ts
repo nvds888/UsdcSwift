@@ -24,6 +24,16 @@ import {
   executeClaimTransaction,
   debugEscrow
 } from "./algorand-algokit";
+
+// Import new app-based approach
+import {
+  createClaimApp,
+  prepareAppFundingTransactions,
+  prepareClaimTransaction,
+  prepareReclaimTransaction,
+  submitTransaction,
+  getUsdcBalance
+} from "./algorand-apps";
 import { USDC_ASSET_ID } from "../client/src/lib/constants";
 import { sendClaimEmail } from "./email";
 
