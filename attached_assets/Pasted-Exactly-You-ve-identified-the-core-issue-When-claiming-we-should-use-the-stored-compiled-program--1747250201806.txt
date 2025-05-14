@@ -1,0 +1,173 @@
+Exactly! You've identified the core issue. When claiming, we should use the stored compiled program from the escrow creation, not generate a new one. Here's the corrected implementation:
+Corrected Option 1: Store and Reuse Compiled Program
+1. Escrow Creation (stores compiled program)
+typescriptexport async function createEscrowAccount(sender: string): Promise<{
+  escrowAddress: string;
+  claimToken: string;
+  logicSignature: algosdk.LogicSigAccount;
+  compiledProgram: string; // Store this for later use
+}> {
+  const validatedSender = ensureAddressString(sender);
+  const claimToken = uuidv4();
+
+  // Generate random salt for uniqueness
+  const salt = Math.floor(Math.random() * 1000000).toString();
+  console.log(`Using random salt for escrow: ${salt}`);
+  
+  // Create unique TEAL program
+  const tealProgram = createEscrowTEAL(validatedSender, salt);
+
+  // Compile the program
+  const compileResponse = await algodClient.compile(tealProgram).do();
+  const compiledProgram = new Uint8Array(
+    Buffer.from(compileResponse.result, "base64"),
+  );
+
+  // Create logic signature
+  const logicSignature = new algosdk.LogicSigAccount(compiledProgram);
+  const escrowAddress = logicSignature.address();
+
+  // Convert compiled program to base64 for storage
+  const compiledProgramBase64 = Buffer.from(compiledProgram).toString('base64');
+
+  return {
+    escrowAddress: ensureAddressString(escrowAddress),
+    claimToken,
+    logicSignature,
+    compiledProgram: compiledProgramBase64, // Return this for storage
+  };
+}
+2. Claim Function (uses stored program)
+typescriptexport async function claimFromEscrow(params: {
+  escrowAddress: string;
+  recipientAddress: string;
+  amount: number;
+  claimToken: string;
+  compiledProgram: string; // Pass in the stored compiled program
+  // Note: no need for senderAddress anymore!
+}): Promise<string> {
+  const { escrowAddress, recipientAddress, amount, claimToken, compiledProgram } = params;
+
+  // Validate addresses
+  const validatedEscrow = ensureAddressString(escrowAddress);
+  const validatedReceiver = ensureAddressString(recipientAddress);
+
+  console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
+  
+  // Verify account status (existing validation code)...
+  
+  // IMPORTANT: Recreate LogicSigAccount from stored program
+  console.log("Recreating LogicSigAccount from stored compiled program");
+  const programBytes = Buffer.from(compiledProgram, 'base64');
+  const logicSignature = new algosdk.LogicSigAccount(programBytes);
+  
+  // Verify it generates the correct address
+  const generatedAddress = logicSignature.address();
+  console.log(`Generated address: ${generatedAddress}, expected: ${validatedEscrow}`);
+  
+  if (generatedAddress !== validatedEscrow) {
+    throw new Error("Stored program doesn't match escrow address!");
+  }
+
+  // Get transaction parameters
+  const txParams = await algodClient.getTransactionParams().do();
+  
+  // Create the claim transaction
+  const microAmount = Math.floor(amount * 1_000_000);
+  const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+    sender: validatedEscrow,
+    receiver: validatedReceiver,
+    amount: microAmount,
+    note: Buffer.from(claimToken),
+    assetIndex: USDC_ASSET_ID,
+    suggestedParams: txParams,
+  });
+
+  // Sign with the recreated logic signature
+  console.log("Signing transaction with stored logic signature");
+  const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
+  
+  // Submit the transaction
+  const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
+  const transactionId = extractTransactionId(response);
+  
+  await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+  console.log(`Transaction confirmed: ${transactionId}`);
+  
+  return transactionId;
+}
+3. Database/Storage Schema
+typescriptinterface EscrowRecord {
+  escrowAddress: string;
+  claimToken: string;
+  senderAddress: string;
+  recipientEmail: string;
+  amount: number;
+  compiledProgram: string; // Store the compiled TEAL bytecode
+  createdAt: Date;
+  claimedAt?: Date;
+  status: 'pending' | 'claimed' | 'refunded';
+}
+4. Usage in API Routes
+typescript// Creating an escrow
+app.post('/api/create-escrow', async (req, res) => {
+  const { senderAddress, recipientEmail, amount } = req.body;
+  
+  // Create the escrow
+  const escrowResult = await createEscrowAccount(senderAddress);
+  
+  // Store everything in database
+  await db.escrows.create({
+    escrowAddress: escrowResult.escrowAddress,
+    claimToken: escrowResult.claimToken,
+    senderAddress: senderAddress,
+    recipientEmail: recipientEmail,
+    amount: amount,
+    compiledProgram: escrowResult.compiledProgram, // Store this!
+    createdAt: new Date(),
+    status: 'pending'
+  });
+  
+  // Send email with claim link to recipient...
+  
+  res.json({ success: true, escrowAddress: escrowResult.escrowAddress });
+});
+
+// Claiming from escrow
+app.post('/api/claim', async (req, res) => {
+  const { claimToken, recipientAddress } = req.body;
+  
+  // Retrieve the stored escrow data
+  const escrowRecord = await db.escrows.findOne({ claimToken });
+  
+  if (!escrowRecord) {
+    throw new Error("Invalid claim token");
+  }
+  
+  // Use the stored compiled program - NO NEW GENERATION!
+  const txId = await claimFromEscrow({
+    escrowAddress: escrowRecord.escrowAddress,
+    recipientAddress: recipientAddress,
+    amount: escrowRecord.amount,
+    claimToken: claimToken,
+    compiledProgram: escrowRecord.compiledProgram // Use stored program
+  });
+  
+  // Update database
+  await db.escrows.updateOne(
+    { claimToken },
+    { 
+      claimedAt: new Date(),
+      status: 'claimed',
+      claimTransactionId: txId
+    }
+  );
+  
+  res.json({ success: true, transactionId: txId });
+});
+This approach:
+
+Generates a unique escrow with a random salt during creation
+Stores the compiled program that corresponds to that unique escrow
+Reuses the exact same program when claiming - no regeneration
+Guarantees the LogicSigAccount will match the escrow address

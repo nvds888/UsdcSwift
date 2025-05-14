@@ -378,7 +378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             recipientAddress: validatedData.recipientAddress,
             amount: parseFloat(transaction.amount),
             compiledTealProgram: transaction.compiledTealProgram,
-            tealSource: transaction.tealSource // Pass the TEAL source if available
+            tealSource: transaction.tealSource || undefined // Pass the TEAL source if available
           });
           console.log(`Claim successful with txId: ${txId}`);
         } catch (error: any) {
@@ -560,7 +560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             recipientAddress: validatedData.senderAddress,
             amount: parseFloat(transaction.amount),
             compiledTealProgram: transaction.compiledTealProgram,
-            tealSource: transaction.tealSource // Pass the TEAL source if available
+            tealSource: transaction.tealSource || undefined // Pass the TEAL source if available
           });
           console.log(`Reclaim successful with txId: ${txId}`);
         } catch (error: any) {
