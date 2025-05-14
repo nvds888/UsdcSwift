@@ -191,6 +191,7 @@ export async function createEscrowAccount(sender: string): Promise<{
   claimToken: string;
   logicSignature: algosdk.LogicSigAccount;
   compiledProgram: string; // Add compiled program to the return value
+  tealSource: string; // Add original TEAL source code
 }> {
   // Validate sender address
   const validatedSender = ensureAddressString(sender);
@@ -257,6 +258,7 @@ export async function createEscrowAccount(sender: string): Promise<{
     claimToken,
     logicSignature,
     compiledProgram: compileResponse.result, // Return the base64 compiled program
+    tealSource: tealProgram, // Return the original TEAL source code
   };
 }
 
@@ -277,6 +279,7 @@ export async function prepareCompleteEscrowDeployment(
   escrowAddress: string;
   logicSignature: algosdk.LogicSigAccount;
   compiledProgram: string; // Include the compiled program
+  tealSource: string; // Include the original TEAL source code
 }> {
   console.log(
     `Preparing complete escrow deployment from ${senderAddress} for ${amount} USDC`,
@@ -475,7 +478,7 @@ export async function prepareCompleteEscrowDeployment(
     });
     
     // Return all transaction info
-    const { compiledProgram } = await createEscrowAccount(validatedSender);
+    const { compiledProgram, tealSource } = await createEscrowAccount(validatedSender);
     
     return {
       unsignedTxns: encodedUnsignedTxns, // Only transactions needing signing by the sender
@@ -483,6 +486,7 @@ export async function prepareCompleteEscrowDeployment(
       escrowAddress,
       logicSignature,
       compiledProgram, // Include the compiled program
+      tealSource, // Include the original TEAL source code
     };
   } catch (error: any) {
     console.error("Error preparing complete escrow deployment:", error);
