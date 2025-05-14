@@ -14,15 +14,22 @@ export const transactions = pgTable("transactions", {
   recipientEmail: text("recipient_email").notNull(),
   amount: text("amount").notNull(), // Store as string to maintain precision
   note: text("note"),
-  smartContractAddress: text("smart_contract_address").notNull(),
-  compiledTealProgram: text("compiled_teal_program").notNull(), // Store the base64 compiled TEAL program
-  tealSource: text("teal_source"), // Store the original TEAL source code
-  tealSalt: text("teal_salt"), // Store the salt used when creating the TEAL program
+  // Fields for the old logicsig approach - keeping for backward compatibility
+  smartContractAddress: text("smart_contract_address"),
+  compiledTealProgram: text("compiled_teal_program"),
+  tealSource: text("teal_source"),
+  tealSalt: text("teal_salt"),
+  // New fields for the app-based approach
+  appId: integer("app_id"),
+  appAddress: text("app_address"),
+  // Common fields
   claimToken: text("claim_token").notNull().unique(),
   claimed: boolean("claimed").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   claimedAt: timestamp("claimed_at"),
   claimedByAddress: text("claimed_by_address"),
+  // Track the approach used for this transaction
+  approach: text("approach").default("logicsig"), // 'logicsig' or 'app'
   transactionId: text("transaction_id"),
   expiresAt: timestamp("expires_at"),
 });
@@ -37,11 +44,17 @@ export const insertTransactionSchema = createInsertSchema(transactions).pick({
   recipientEmail: true,
   amount: true,
   note: true,
+  // Old LogicSig approach fields
   smartContractAddress: true,
   compiledTealProgram: true,
   tealSource: true,
   tealSalt: true,
+  // New app-based approach fields
+  appId: true,
+  appAddress: true,
+  // Common fields
   claimToken: true,
+  approach: true,
 });
 
 export const sendUsdcSchema = z.object({

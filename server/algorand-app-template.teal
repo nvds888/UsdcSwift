@@ -1,0 +1,58 @@
+#pragma version 6
+
+// This smart contract manages a USDC escrow with claim functionality
+// Created for email-based USDC transfers
+
+// Transaction types
+txn TypeEnum
+int 1 // PayTxn
+==
+txn TypeEnum
+int 4 // AssetTransfer
+==
+||
+bnz handle_transfer
+err
+
+handle_transfer:
+// Check if this is an Asset Transfer transaction
+txn TypeEnum
+int 4 // AssetTransfer
+==
+bz handle_payment
+
+// Handle asset transfer (USDC transfer)
+// Verify the asset is USDC
+txn XferAsset
+int TMPL_ASSET_ID // USDC Asset ID - will be replaced during deployment
+==
+// Only if USDC
+bnz check_claim_authority
+err
+
+check_claim_authority:
+// Check if sender is the app itself (reclaiming case) or the intended recipient
+txn Sender
+addr TMPL_SENDER // Original sender address - will be replaced
+==
+bnz allow_transfer // Original sender can always reclaim
+
+// If not sender, check if it's the intended recipient
+txn Receiver
+addr TMPL_RECIPIENT // Intended recipient - will be replaced
+==
+bnz allow_transfer // Allow claim by intended recipient
+
+// Otherwise reject
+err
+
+handle_payment:
+// Allow payments to the app for funding
+// For simplicity - in production you'd add more checks
+int 1
+return
+
+allow_transfer:
+// Allow the transaction
+int 1
+return
