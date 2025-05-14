@@ -35,6 +35,17 @@ function extractTransactionId(response: any): string {
 }
 
 /**
+ * Helper function to check if an asset is USDC, handling different property naming conventions
+ */
+function isUsdcAsset(asset: any): boolean {
+  // Handle different property naming conventions
+  const assetId = asset['asset-id'] || asset['assetId'] || asset.assetId;
+  console.log(`Checking asset: ${JSON.stringify(asset, null, 2)}`);
+  console.log(`Asset ID extracted: ${assetId}, comparing to USDC ID: ${USDC_ASSET_ID}`);
+  return String(assetId) === String(USDC_ASSET_ID);
+}
+
+/**
  * Helper function to ensure an address is properly formatted as a string
  */
 function ensureAddressString(address: string | algosdk.Address): string {
@@ -1026,8 +1037,9 @@ export async function claimFromEscrowWithCompiledTeal({
       const accountInfo = await algodClient.accountInformation(validatedRecipient).do();
       const assets = accountInfo.assets || [];
       
-      // Check if recipient has opted into USDC
-      const hasOptedIn = assets.some((asset: any) => asset['asset-id'] === USDC_ASSET_ID);
+      // Check if recipient has opted into USDC using our helper function
+      console.log(`Checking if recipient ${validatedRecipient} has opted into USDC...`);
+      const hasOptedIn = assets.some(isUsdcAsset);
       
       if (!hasOptedIn) {
         console.error(`Recipient ${validatedRecipient} has not opted into USDC asset ID ${USDC_ASSET_ID}`);
