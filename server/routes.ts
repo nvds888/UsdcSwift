@@ -275,30 +275,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Funds have already been claimed" });
       }
       
-      // Generate transaction parameters for the frontend to sign
-      // In a production app, we would recreate the escrow logic signature here
-      // and return the transaction parameters for the frontend to sign
-      const txParams = {
-        escrowAddress: transaction.smartContractAddress,
-        recipientAddress: validatedData.recipientAddress,
-        claimToken: validatedData.claimToken,
-        amount: parseFloat(transaction.amount)
-      };
+      console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
       
-      // For now, generate a fake transaction ID
-      const txId = `TXID-${uuidv4()}`;
-      
-      // Update transaction as claimed
-      const updatedTransaction = await storage.markTransactionAsClaimed(
-        transaction.id,
-        validatedData.recipientAddress,
-        txId
-      );
-      
-      return res.json({
-        ...updatedTransaction,
-        txParams
-      });
+      try {
+        // Generate a real claim transaction using the claimFromEscrow function
+        // This creates a transaction to transfer USDC from the escrow to the recipient
+        const { transaction: claimTxn, logicSignature } = await claimFromEscrow({
+          escrowAddress: transaction.smartContractAddress,
+          recipientAddress: validatedData.recipientAddress,
+          amount: parseFloat(transaction.amount),
+          claimToken: validatedData.claimToken
+        });
+        
+        // Convert transaction to base64 for the frontend to sign
+        const encodedTxn = Buffer.from(algosdk.encodeUnsignedTransaction(claimTxn)).toString('base64');
+        
+        // Prepare transaction parameters for the frontend
+        const txParams = {
+          txnBase64: encodedTxn,
+          escrowAddress: transaction.smartContractAddress,
+          recipientAddress: validatedData.recipientAddress,
+          claimToken: validatedData.claimToken,
+          amount: parseFloat(transaction.amount)
+        };
+        
+        // Note: We don't mark the transaction as claimed yet
+        // This will happen after the transaction is signed and submitted
+        
+        return res.json({
+          ...transaction,
+          txParams
+        });
+      } catch (txError) {
+        console.error("Error creating claim transaction:", txError);
+        return res.status(500).json({ message: "Failed to create claim transaction" });
+      }
     } catch (error) {
       console.error("Error claiming transaction:", error);
       if (error instanceof z.ZodError) {
