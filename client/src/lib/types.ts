@@ -36,7 +36,13 @@ export interface ReclaimUsdcParams {
   senderAddress: string;
 }
 
+export interface SignedTransactionParams {
+  signedTxn: string;
+  transactionId: number;
+}
+
 export interface TransactionParams {
+  txnBase64?: string;
   senderAddress?: string;
   escrowAddress: string;
   recipientAddress?: string;

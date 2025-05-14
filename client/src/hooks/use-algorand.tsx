@@ -3,7 +3,15 @@ import { useWallet } from "@txnlab/use-wallet-react";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Transaction, TransactionResponse, SendUsdcParams, ClaimUsdcParams, RegenerateLinkParams, ReclaimUsdcParams } from "@/lib/types";
+import { 
+  Transaction, 
+  TransactionResponse, 
+  SendUsdcParams, 
+  ClaimUsdcParams, 
+  RegenerateLinkParams, 
+  ReclaimUsdcParams,
+  SignedTransactionParams
+} from "@/lib/types";
 
 export function useAlgorand() {
   const { activeAccount } = useWallet();
@@ -44,26 +52,26 @@ export function useAlgorand() {
   const sendUsdc = async (params: SendUsdcParams): Promise<TransactionResponse | null> => {
     setIsLoading(true);
     try {
-      // First, create the escrow account and get transaction details
+      // Create the escrow account and get transaction details
       const res = await apiRequest("POST", "/api/send", params);
       const data = await res.json();
       
-      // In a production app, this would handle the actual transaction signing
-      // using the connected wallet
-      if (activeAccount && data.txParams) {
-        // This would be where we'd sign and submit the transaction
-        // For example:
-        // const algodClient = new algosdk.Algodv2(token, server, port);
-        // const suggestedParams = await algodClient.getTransactionParams().do();
-        // const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-        //   from: activeAccount.address,
-        //   to: data.txParams.escrowAddress,
-        //   amount: Math.floor(data.txParams.amount * 1_000_000), // Convert to microUSDC
-        //   assetIndex: USDC_ASSET_ID,
-        //   suggestedParams
-        // });
-        // const signedTxn = await window.algorand.signTransaction(txn.toByte());
-        // await algodClient.sendRawTransaction(signedTxn).do();
+      // Sign and submit the transaction if we have txParams
+      if (activeAccount && data.txParams && data.txParams.txnBase64) {
+        // Attempt to sign and submit the transaction with the wallet
+        const success = await signAndSubmitTransaction(
+          data.txParams.txnBase64,
+          data.id
+        );
+        
+        if (!success) {
+          // If transaction signing fails, show a warning but don't fail completely
+          // This might happen if the user rejects the transaction
+          toast({
+            title: "Warning",
+            description: "Transaction was created but not signed. The recipient can still claim after you fund the escrow account."
+          });
+        }
       }
       
       // Invalidate transactions cache
@@ -71,7 +79,7 @@ export function useAlgorand() {
       
       toast({
         title: "Success",
-        description: `USDC sent to ${params.recipientEmail}`,
+        description: `USDC transfer initiated to ${params.recipientEmail}`,
       });
       
       return data;
@@ -92,27 +100,24 @@ export function useAlgorand() {
   const claimUsdc = async (params: ClaimUsdcParams): Promise<Transaction | null> => {
     setIsLoading(true);
     try {
-      // First, get the transaction parameters from the server
+      // Get the transaction details and prepare the claim transaction
       const res = await apiRequest("POST", "/api/claim", params);
       const data = await res.json();
       
-      // In a production app, this would handle the actual transaction signing
-      // using the connected wallet
-      if (activeAccount && data.txParams) {
-        // This would be where we'd sign and submit the transaction
-        // For example:
-        // const algodClient = new algosdk.Algodv2(token, server, port);
-        // const suggestedParams = await algodClient.getTransactionParams().do();
-        // const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-        //   from: data.txParams.escrowAddress,
-        //   to: activeAccount.address,
-        //   amount: Math.floor(data.txParams.amount * 1_000_000), // Convert to microUSDC
-        //   assetIndex: USDC_ASSET_ID,
-        //   note: new Uint8Array(Buffer.from(data.txParams.claimToken)),
-        //   suggestedParams
-        // });
-        // const signedTxn = await window.algorand.signTransaction(txn.toByte());
-        // await algodClient.sendRawTransaction(signedTxn).do();
+      // Sign and submit the transaction if we have txParams
+      if (activeAccount && data.txParams && data.txParams.txnBase64) {
+        // Attempt to sign and submit the transaction with the wallet
+        const success = await signAndSubmitTransaction(
+          data.txParams.txnBase64,
+          data.id
+        );
+        
+        if (!success) {
+          toast({
+            title: "Warning",
+            description: "Unable to sign the claim transaction. Please try again."
+          });
+        }
       }
       
       toast({
@@ -211,6 +216,85 @@ export function useAlgorand() {
     }
   };
 
+  // Submit signed transaction to the blockchain
+  const submitSignedTransaction = async (params: SignedTransactionParams): Promise<{ success: boolean; transactionId?: string }> => {
+    setIsLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/submit-transaction", params);
+      const data = await res.json();
+      
+      if (data.success) {
+        toast({
+          title: "Success",
+          description: "Transaction submitted successfully",
+        });
+        
+        // Invalidate transactions cache and refresh balance
+        queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+        fetchBalance();
+        
+        return {
+          success: true,
+          transactionId: data.transactionId
+        };
+      } else {
+        throw new Error("Failed to submit transaction");
+      }
+    } catch (error) {
+      console.error("Error submitting transaction:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to submit transaction",
+        variant: "destructive",
+      });
+      return { success: false };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Sign transaction with wallet and submit
+  const signAndSubmitTransaction = async (txnBase64: string, transactionId: number): Promise<boolean> => {
+    if (!activeAccount) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to sign the transaction",
+        variant: "destructive",
+      });
+      return false;
+    }
+    
+    try {
+      setIsLoading(true);
+      
+      // Sign the transaction with the wallet
+      // This is using the txnlab wallet API
+      const signedTxns = await activeAccount.signTxns([txnBase64]);
+      
+      if (!signedTxns || !signedTxns[0]) {
+        throw new Error("Failed to sign transaction");
+      }
+      
+      // Submit the signed transaction
+      const result = await submitSignedTransaction({
+        signedTxn: signedTxns[0],
+        transactionId
+      });
+      
+      return result.success;
+    } catch (error) {
+      console.error("Error signing transaction:", error);
+      toast({
+        title: "Error",
+        description: "Failed to sign transaction with wallet",
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return {
     balance,
     isLoading,
@@ -219,5 +303,7 @@ export function useAlgorand() {
     regenerateLink,
     reclaimUsdc,
     fetchBalance,
+    submitSignedTransaction,
+    signAndSubmitTransaction
   };
 }
