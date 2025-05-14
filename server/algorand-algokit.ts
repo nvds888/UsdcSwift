@@ -592,53 +592,9 @@ export async function claimFromEscrow(
 
     console.log(`Preparing claim from escrow: ${validatedEscrow} to ${validatedReceiver}`);
     
-    // Check if escrow exists and has USDC balance
-    let escrowInfo;
-    try {
-      escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
-      console.log("Escrow account exists");
-      console.log("Escrow address:", validatedEscrow);
-      
-      // Log only relevant information to avoid BigInt serialization issues
-      console.log("Escrow amount:", escrowInfo.amount);
-      console.log("Escrow min balance:", escrowInfo?.minBalance || "Unknown");
-      
-      // Check if escrow has the USDC asset
-      if (!escrowInfo.assets) {
-        throw new Error("Escrow account has no assets");
-      }
-      
-      const usdcAsset = escrowInfo.assets.find((asset: any) => 
-        asset['asset-id'] === USDC_ASSET_ID
-      );
-      
-      if (!usdcAsset) {
-        console.log("No USDC found in escrow, attempting to opt-in first");
-        
-        // Try to opt-in the escrow to USDC first
-        // We need the sender address for the opt-in transaction - using recipient as fallback
-        await optInEscrowToUSDC(validatedEscrow, recipientAddress);
-        
-        // Refresh escrow information
-        escrowInfo = await algodClient.accountInformation(validatedEscrow).do();
-      } else {
-        console.log("USDC balance in escrow:", usdcAsset.amount);
-        
-        if (usdcAsset.amount < Math.floor(amount * 1_000_000)) {
-          throw new Error(`Insufficient USDC in escrow: ${usdcAsset.amount} < ${amount * 1_000_000}`);
-        }
-      }
-    } catch (error) {
-      console.error("Error retrieving or validating escrow account:", error);
-      throw new Error("Failed to validate escrow account");
-    }
-    
-    // Now, create and send the actual blockchain transaction
-    console.log("Creating real blockchain transaction to transfer USDC");
-    
-    // Create TEAL program based on the escrow address
-    console.log("Recreating TEAL program for the escrow account");
-    const tealProgram = `#pragma version 6
+    // Create TEAL program for the escrow
+    // We'll use a much simpler program that only checks asset ID
+    const simpleProgram = `#pragma version 6
 // Check if transaction type is AssetTransfer
 txn TypeEnum
 int 4
@@ -653,62 +609,60 @@ int ${USDC_ASSET_ID}
 
     // Compile the TEAL program
     console.log("Compiling TEAL program for escrow");
-    const compileResponse = await algodClient.compile(tealProgram).do();
+    let compiledProgram;
+    try {
+      compiledProgram = await algodClient.compile(simpleProgram).do();
+    } catch (error: any) {
+      console.error("Error compiling TEAL program:", error);
+      throw new Error(`Failed to compile escrow TEAL program: ${error.message}`);
+    }
+    
     const programBytes = new Uint8Array(
-      Buffer.from(compileResponse.result, "base64")
+      Buffer.from(compiledProgram.result, "base64"),
     );
 
     // Create LogicSigAccount
-    console.log("Creating LogicSigAccount for escrow");
+    console.log("Creating LogicSigAccount");
     const logicSignature = new algosdk.LogicSigAccount(programBytes);
     
     // Get transaction parameters
     const txParams = await algodClient.getTransactionParams().do();
-    console.log("Got network parameters for claim transaction");
+    console.log("Got network parameters for claim");
 
     // Convert USDC amount to micro-USDC (assuming 6 decimal places)
     const microAmount = Math.floor(amount * 1_000_000);
-    console.log(`Creating claim transaction for ${microAmount} microUSDC (${amount} USDC)`);
+    console.log(`Preparing to claim ${microAmount} microUSDC (${amount} USDC)`);
 
-    // Create the actual asset transfer transaction
+    // Create the transaction
+    console.log(`Creating claim transaction: from=${validatedEscrow} to=${validatedReceiver}`);
     const txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       sender: validatedEscrow,
       receiver: validatedReceiver,
       amount: microAmount,
+      note: Buffer.from(claimToken),
       assetIndex: USDC_ASSET_ID,
-      note: Buffer.from(`Claim: ${claimToken}`),
       suggestedParams: txParams,
     });
 
     // Sign the transaction with the logic signature
-    console.log("Signing transaction with LogicSig");
+    console.log("Signing transaction with logic signature");
     const signedTxn = algosdk.signLogicSigTransaction(txn, logicSignature);
     
     // Submit the transaction to the network
-    console.log("Submitting real transaction to Algorand network");
+    console.log("Submitting signed transaction to Algorand network");
     try {
       const response = await algodClient.sendRawTransaction(signedTxn.blob).do();
-      // Get transaction ID - different versions of algosdk use different property names
-      const txId = (response as any).txId || (response as any).txid || extractTransactionId(response);
       
-      console.log(`Transaction submitted, waiting for confirmation: ${txId}`);
-      await algosdk.waitForConfirmation(algodClient, txId, 5);
+      // Wait for confirmation
+      const transactionId = extractTransactionId(response);
+      console.log(`Waiting for confirmation of transaction: ${transactionId}`);
+      await algosdk.waitForConfirmation(algodClient, transactionId, 5);
+      console.log(`Transaction confirmed: ${transactionId}`);
       
-      console.log(`Transaction confirmed on blockchain: ${txId}`);
-      return txId;
+      return transactionId;
     } catch (error: any) {
       console.error("Error submitting transaction:", error);
-      
-      // Check if this is an authorization error
-      if (error.message && error.message.includes("authorized by")) {
-        console.error("Authorization error detected. This means the LogicSig doesn't match the escrow account.");
-        console.error("The escrow account was created with a different TEAL program than we're using now.");
-        
-        // We need an alternative approach - let's try to return useful information
-        throw new Error("Transaction failed: Logic signature doesn't match escrow account. Contact support with escrow address: " + validatedEscrow);
-      }
-      
-      throw new Error(`Failed to submit transaction: ${error.message || JSON.stringify(error)}`);
+      throw new Error(`Failed to submit claim transaction: ${error.message || JSON.stringify(error)}`);
     }
   } catch (error: any) {
     console.error("Error in claim process:", error);

@@ -331,7 +331,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
       
       try {
-        // Execute the claim transaction directly on the blockchain
+        // Execute the claim transaction directly on the server
+        // This handles everything: creating the transaction, signing with LogicSig, and submitting
         const txId = await claimFromEscrow({
           escrowAddress: transaction.smartContractAddress,
           recipientAddress: validatedData.recipientAddress,
@@ -339,51 +340,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           claimToken: validatedData.claimToken
         });
         
-        console.log(`Real blockchain transaction completed with txId: ${txId}`);
+        console.log(`Claim transaction successful with txId: ${txId}`);
         
-        // Update transaction as claimed in the database
+        // Update transaction as claimed
         const updatedTransaction = await storage.markTransactionAsClaimed(
           transaction.id,
           validatedData.recipientAddress,
           txId
         );
         
-        console.log(`Transaction marked as claimed with blockchain txId: ${txId}`);
-        
         return res.json({
           ...updatedTransaction,
           transactionId: txId,
-          success: true,
-          message: "USDC claimed successfully!"
+          success: true
         });
       } catch (txError) {
-        console.error("Error processing blockchain claim:", txError);
-        
-        // Check if this is a specific error we can provide better feedback for
-        if (txError.message && (
-            txError.message.includes("Logic signature doesn't match") || 
-            txError.message.includes("authorized by")
-          )) {
-          return res.status(400).json({ 
-            message: "This claim link appears to be invalid. Please contact the sender to generate a new link.",
-            error: txError.message
-          });
-        }
-        
-        return res.status(500).json({ 
-          message: "Failed to process claim on the blockchain. Please try again later.",
-          error: txError.message 
-        });
+        console.error("Error creating claim transaction:", txError);
+        return res.status(500).json({ message: "Failed to create claim transaction" });
       }
     } catch (error) {
-      console.error("Error in claim validation:", error);
+      console.error("Error claiming transaction:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({
           message: "Invalid input data",
           errors: error.errors,
         });
       }
-      return res.status(500).json({ message: "Failed to validate claim request" });
+      return res.status(500).json({ message: "Failed to claim transaction" });
     }
   });
 
