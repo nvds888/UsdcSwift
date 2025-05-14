@@ -191,35 +191,39 @@ export async function prepareAppFundingTransactions(
     const suggestedParams = await algodClient.getTransactionParams().do();
     
     // 1. Fund the app with minimum balance (0.1 ALGO)
-    const appFundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      from: senderAddr,
-      to: validatedAppAddress,
-      amount: 100000, // 0.1 ALGO
-      note: new Uint8Array(0),
+    const appFundingTxn = algosdk.makePaymentTxn(
+      senderAddr,
+      validatedAppAddress,
+      100000, // 0.1 ALGO
+      new Uint8Array(0),
+      undefined,
       suggestedParams
-    });
+    );
     
     // 2. Call app to opt in to USDC
-    const usdcOptInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedAppAddress, // to app (self)
-      amount: 0, // amount (0 for opt-in)
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
+    const usdcOptInTxn = algosdk.makeAssetTransferTxn(
+      validatedAppAddress, // from app
+      validatedAppAddress, // to app (self)
+      undefined, // close remainder to
+      undefined, // revocation target
+      0, // amount (0 for opt-in)
+      new Uint8Array(0), // note
+      USDC_ASSET_ID, // USDC asset ID
       suggestedParams
-      // This will be signed by the app's logic
-    });
+    );
     
     // 3. Transfer USDC to the app (signed by sender)
     const microAmount = Math.floor(amount * 1_000_000); // Convert to micro USDC
-    const usdcTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: senderAddr, // from sender
-      to: validatedAppAddress, // to app
-      amount: microAmount, // amount of USDC
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
+    const usdcTransferTxn = algosdk.makeAssetTransferTxn(
+      senderAddr, // from sender
+      validatedAppAddress, // to app
+      undefined, // close remainder to
+      undefined, // revocation target
+      microAmount, // amount of USDC
+      new Uint8Array(0), // note
+      USDC_ASSET_ID, // USDC asset ID
       suggestedParams
-    });
+    );
     
     console.log("Funding transactions prepared successfully");
     
@@ -264,14 +268,16 @@ export async function prepareClaimTransaction(
     const microAmount = Math.floor(amount * 1_000_000);
     
     // Create asset transfer transaction from app to recipient
-    const claimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedRecipientAddress, // to recipient
-      amount: microAmount, // amount
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
+    const claimTxn = algosdk.makeAssetTransferTxn(
+      validatedAppAddress, // from app
+      validatedRecipientAddress, // to recipient
+      undefined, // close remainder to
+      undefined, // revocation target
+      microAmount, // amount
+      new Uint8Array(0), // note
+      USDC_ASSET_ID, // USDC asset ID
       suggestedParams
-    });
+    );
     
     console.log("Claim transaction prepared successfully");
     
@@ -312,14 +318,16 @@ export async function prepareReclaimTransaction(
     const microAmount = Math.floor(amount * 1_000_000);
     
     // Create asset transfer transaction from app to sender
-    const reclaimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedSenderAddress, // to sender
-      amount: microAmount, // amount
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
+    const reclaimTxn = algosdk.makeAssetTransferTxn(
+      validatedAppAddress, // from app
+      validatedSenderAddress, // to sender
+      undefined, // close remainder to
+      undefined, // revocation target
+      microAmount, // amount
+      new Uint8Array(0), // note
+      USDC_ASSET_ID, // USDC asset ID
       suggestedParams
-    });
+    );
     
     console.log("Reclaim transaction prepared successfully");
     
