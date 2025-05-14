@@ -280,17 +280,30 @@ export async function prepareCompleteEscrowDeployment(
     const params = await algodClient.getTransactionParams().do();
 
     // Create a new parameters object for use in transactions
-    // This avoids TypeScript errors when accessing dynamic properties
+    // Using only the properly defined fields from SuggestedParams interface
     const safeParams: algosdk.SuggestedParams = {
       flatFee: params.flatFee,
-      fee: params.fee,
-      firstRound: params.firstRound,
-      lastRound: params.lastRound,
+      fee: Number(params.fee),
+      minFee: Number(params.minFee),
+      firstValid: Number(params.firstValid),
+      lastValid: Number(params.lastValid),
       genesisID: params.genesisID,
       genesisHash: params.genesisHash
     };
 
-    console.log("Suggested params:", JSON.stringify(safeParams, null, 2));
+    // For logging, use a separate object to avoid BigInt serialization issues
+    const loggableParams = {
+      flatFee: params.flatFee,
+      fee: Number(params.fee),
+      minFee: Number(params.minFee),
+      firstValid: Number(params.firstValid),
+      lastValid: Number(params.lastValid),
+      genesisID: params.genesisID,
+      // Convert Uint8Array to string for logging
+      genesisHash: Buffer.from(params.genesisHash).toString('base64')
+    };
+    
+    console.log("Suggested params:", JSON.stringify(loggableParams, null, 2));
 
     // Minimum balance required for accounts with 1 asset (200,000 microALGO = 0.2 ALGO)
     const minBalance = 200000;
