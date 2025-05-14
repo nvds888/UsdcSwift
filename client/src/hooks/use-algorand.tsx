@@ -25,7 +25,17 @@ export function useAlgorand() {
     if (!activeAccount?.address) return;
 
     try {
-      const response = await fetch(`/api/balance?address=${activeAccount.address}`);
+      // Check if we have a custom asset ID in local storage
+      const customAssetId = localStorage.getItem("usdc_asset_id");
+      
+      // Build the URL with the asset ID parameter if available
+      let url = `/api/balance?address=${activeAccount.address}`;
+      if (customAssetId) {
+        url += `&assetId=${customAssetId}`;
+        console.log(`Using custom asset ID: ${customAssetId}`);
+      }
+      
+      const response = await fetch(url);
       if (!response.ok) throw new Error("Failed to fetch balance");
       
       const data = await response.json();
