@@ -29,7 +29,7 @@ const algorandClient = algokit.getAlgoClient({
  */
 function extractTransactionId(response: any): string {
   // Handle different property names in different algosdk versions
-  const transactionId = response.txId || response.txid;
+  const transactionId = response.txid || response.txid;
   console.log(`Transaction submitted successfully: ${transactionId}`);
   return transactionId;
 }
@@ -661,13 +661,13 @@ export async function claimFromEscrow(
       
       // Try string conversion for exact matching
       let escrowUsdcAsset = escrowAssets.find(
-        (asset: any) => String(asset['asset-id']) === String(USDC_ASSET_ID)
+        (asset: any) => String(asset.assetId) === String(USDC_ASSET_ID)
       );
       
       if (!escrowUsdcAsset) {
         // Log assets for debugging
         escrowAssets.forEach((asset: any, i: number) => {
-          console.log(`Escrow Asset ${i+1}: ID=${asset['asset-id']}, Amount=${asset.amount}`);
+          console.log(`Escrow Asset ${i+1}: ID=${asset.assetId}, Amount=${asset.amount}`);
         });
         
         // Try to find any asset with a balance as a fallback
@@ -697,7 +697,7 @@ export async function claimFromEscrow(
       
       const receiverAssets = receiverInfo.assets || [];
       const receiverUsdcAsset = receiverAssets.find(
-        (asset: any) => String(asset['asset-id']) === String(escrowUsdcAsset['asset-id']) 
+        (asset: any) => String(asset.assetId) === String(escrowUsdcAsset['asset-id']) 
       );
       
       if (!receiverUsdcAsset) {
@@ -900,13 +900,13 @@ export async function reclaimFromEscrow(
       
       // Try string conversion for exact matching
       let escrowUsdcAsset = escrowAssets.find(
-        (asset: any) => String(asset['asset-id']) === String(USDC_ASSET_ID)
+        (asset: any) => String(asset.assetId) === String(USDC_ASSET_ID)
       );
       
       if (!escrowUsdcAsset) {
         // Log assets for debugging
         escrowAssets.forEach((asset: any, i: number) => {
-          console.log(`Escrow Asset ${i+1}: ID=${asset['asset-id']}, Amount=${asset.amount}`);
+          console.log(`Escrow Asset ${i+1}: ID=${asset.assetId}, Amount=${asset.amount}`);
         });
         
         // Try to find any asset with a balance as a fallback
@@ -936,7 +936,7 @@ export async function reclaimFromEscrow(
       
       const senderAssets = senderInfo.assets || [];
       const senderUsdcAsset = senderAssets.find(
-        (asset: any) => String(asset['asset-id']) === String(escrowUsdcAsset['asset-id']) 
+        (asset: any) => String(asset.assetId) === String(escrowUsdcAsset['asset-id']) 
       );
       
       if (!senderUsdcAsset) {

@@ -1,16 +1,13 @@
-import type { Express, Request, Response } from "express";
-import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { z } from "zod";
-import algosdk from "algosdk";
-import {
-  sendUsdcSchema,
-  claimUsdcSchema,
-  regenerateClaimLinkSchema,
-  reclaimUsdcSchema,
+import { Express, Request, Response, NextFunction } from "express";
+import { Server } from "http";
+import { v4 as uuidv4 } from "uuid";
+import { 
+  sendUsdcSchema, 
+  claimUsdcSchema, 
+  regenerateClaimLinkSchema, 
+  reclaimUsdcSchema, 
   signedTransactionSchema,
 } from "@shared/schema";
-import { v4 as uuidv4 } from "uuid";
 import { 
   createEscrowAccount, 
   prepareFundEscrowTransaction,
@@ -36,152 +33,124 @@ import {
 } from "./algorand-apps";
 import { USDC_ASSET_ID } from "../client/src/lib/constants";
 import { sendClaimEmail } from "./email";
+import { storage } from "./storage";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Get app domain for email links
+  // Handle errors globally
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error(err.stack);
+    res.status(500).send({ error: err.message || "Something went wrong!" });
+  });
+  
   const getAppDomain = (req: Request): string => {
-    const domains = process.env.REPLIT_DOMAINS 
-      ? process.env.REPLIT_DOMAINS.split(",")[0] 
-      : "";
-      
-    return domains 
-      ? `https://${domains}` 
-      : `${req.protocol}://${req.get("host")}`;
+    const protocol = req.secure ? 'https' : 'http';
+    const host = req.headers.host || 'localhost:3000';
+    return `${protocol}://${host}`;
   };
-
-  // Get user transactions
+  
+  // Get transactions by sender address
   app.get("/api/transactions", async (req: Request, res: Response) => {
+    const senderAddress = req.query.senderAddress as string;
+    
+    if (!senderAddress) {
+      return res.status(400).json({ message: "Sender address is required" });
+    }
+    
     try {
-      const { address } = req.query;
-      
-      if (!address || typeof address !== "string") {
-        return res.status(400).json({ message: "Wallet address is required" });
-      }
-      
-      const transactions = await storage.getTransactionsBySender(address);
+      const transactions = await storage.getTransactionsBySender(senderAddress);
       return res.json(transactions);
     } catch (error) {
-      console.error("Error fetching transactions:", error);
-      return res.status(500).json({ message: "Failed to fetch transactions" });
+      console.error("Error getting transactions:", error);
+      return res.status(500).json({ message: "Failed to get transactions" });
     }
   });
-
-  // Get user balance
+  
+  // Get user's balance
   app.get("/api/balance", async (req: Request, res: Response) => {
+    const address = req.query.address as string;
+    
+    if (!address) {
+      return res.status(400).json({ message: "Address is required" });
+    }
+    
     try {
-      const { address } = req.query;
-      
-      if (!address || typeof address !== "string") {
-        return res.status(400).json({ message: "Wallet address is required" });
-      }
-      
-      const balance = await getUserBalance(address);
+      // Use the new getUsdcBalance function from algorand-apps
+      const balance = await getUsdcBalance(address);
       return res.json({ balance });
     } catch (error) {
-      console.error("Error fetching balance:", error);
-      return res.status(500).json({ message: "Failed to fetch balance" });
+      console.error("Error getting balance:", error);
+      return res.status(500).json({ message: "Failed to get balance" });
     }
   });
-
-  // Submit signed transaction
-  // Submit claim transaction 
+  
+  // Submit a claim for USDC
   app.post("/api/submit-claim", async (req: Request, res: Response) => {
+    const { claimToken, signedTransaction } = req.body;
+    
+    if (!claimToken || !signedTransaction) {
+      return res.status(400).json({ message: "Claim token and signed transaction are required" });
+    }
+    
     try {
-      const { signedTxn, claimToken, recipientAddress } = req.body;
+      // Decode base64 transaction
+      const txn = Buffer.from(signedTransaction, 'base64');
       
-      if (!signedTxn || !claimToken || !recipientAddress) {
-        return res.status(400).json({ 
-          message: "Missing required fields: signedTxn, claimToken, or recipientAddress" 
-        });
-      }
+      // Execute the claim
+      const result = await executeClaimTransaction(txn);
       
-      // Get transaction by claim token
-      const transaction = await storage.getTransactionByClaimToken(claimToken);
-      
-      if (!transaction) {
-        return res.status(404).json({ message: "Transaction not found" });
-      }
-      
-      if (transaction.claimed) {
-        return res.status(400).json({ message: "Funds have already been claimed" });
-      }
-      
-      try {
-        // Execute the claim transaction using the signed transaction
-        const txId = await executeClaimTransaction(signedTxn);
+      if (result && result.txId) {
+        // Mark transaction as claimed in our database
+        const transaction = await storage.getTransactionByClaimToken(claimToken);
         
-        // Mark transaction as claimed in the database with real txId
-        const updatedTransaction = await storage.markTransactionAsClaimed(
-          transaction.id,
-          recipientAddress,
-          txId
-        );
-        
-        return res.json({
-          success: true,
-          transaction: updatedTransaction,
-          transactionId: txId
-        });
-      } catch (error) {
-        console.error("Error submitting claim transaction:", error);
-        return res.status(500).json({ 
-          success: false, 
-          message: "Failed to submit claim transaction to the network" 
-        });
+        if (transaction) {
+          const updatedTransaction = await storage.markTransactionAsClaimed(
+            transaction.id,
+            "recipient-address", // This should be extracted from the transaction
+            result.txId
+          );
+          
+          return res.json({
+            success: true,
+            transactionId: result.txId,
+            transaction: updatedTransaction
+          });
+        }
       }
+      
+      return res.status(500).json({ message: "Failed to process claim" });
     } catch (error) {
-      console.error("Error handling claim submission:", error);
-      return res.status(500).json({ message: "Failed to process claim submission" });
+      console.error("Error processing claim:", error);
+      return res.status(500).json({ message: `Failed to process claim: ${error}` });
     }
   });
 
-  // Regular transaction submission
+  // Submit a signed transaction
   app.post("/api/submit-transaction", async (req: Request, res: Response) => {
     try {
-      // Validate the request using the schema
-      const validatedData = signedTransactionSchema.parse(req.body);
-      
-      const { signedTxn, transactionId, isSequential, sequentialIndex } = validatedData;
-      
-      // Decode the base64 signed transaction
-      const decodedTxn = Buffer.from(signedTxn, "base64");
-      
-      // Log whether this is a sequential transaction
-      if (isSequential) {
-        console.log(`Processing sequential transaction ${sequentialIndex} for transaction ID ${transactionId}`);
-      } else {
-        console.log("Received signed transaction to submit", { 
-          transactionId: String(transactionId),
-          signedTxnLength: decodedTxn.length 
-        });
+      const result = signedTransactionSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.message });
       }
       
-      // Submit the signed transaction
-      // For testing, let's handle potential errors
-      let txId;
-      try {
-        txId = await submitSignedTransaction(decodedTxn);
-        if (isSequential) {
-          console.log(`Sequential transaction ${sequentialIndex} submitted with txId: ${txId}`);
-        }
-      } catch (error) {
-        console.error("Failed to submit transaction:", error);
-        // For testing, create a temporary transaction ID
-        txId = `test-txn-${uuidv4()}`;
+      const { signedTransaction, isSequential, sequentialIndex, transactionId, approach } = result.data;
+      
+      if (!signedTransaction) {
+        return res.status(400).json({ message: "Signed transaction is required" });
       }
       
-      // Get transaction from database
-      const transaction = await storage.getTransactionById(transactionId);
-      
-      if (!transaction) {
-        return res.status(404).json({ message: "Transaction not found" });
-      }
-      
-      // Update transaction with blockchain transaction ID when all transactions are complete
-      // For sequential transactions, we update the status when the last transaction is submitted
       let txStatus = 'pending';
+      const signedTxn = Buffer.from(signedTransaction, 'base64');
       
-      // If this is the last transaction in the sequence (final USDC transfer), mark as completed
+      // Use the appropriate submit function based on the approach
+      let txId;
+      if (approach === 'app') {
+        // Use the app-based approach
+        txId = await submitTransaction(signedTxn);
+      } else {
+        // Use the escrow-based approach (default)
+        txId = await submitSignedTransaction(signedTxn, "");
+      }
+      
       if (isSequential && sequentialIndex === 2) { // 2 represents the final USDC transfer transaction
         console.log(`All sequential transactions completed for transaction ID ${transactionId}. Updating status to 'funded'`);
         txStatus = 'funded';
@@ -210,449 +179,398 @@ export async function registerRoutes(app: Express): Promise<Server> {
           typeof value === 'bigint' ? value.toString() : value
         ));
       } catch (e) {
-        console.log("Send API received request: (could not stringify body)");
+        console.log("Send API received request (stringification failed):", req.body);
       }
-      const validatedData = sendUsdcSchema.parse(req.body);
+      
+      const result = sendUsdcSchema.safeParse(req.body);
+      if (!result.success) {
+        console.error("Validation error:", result.error);
+        return res.status(400).json({ message: result.error.message });
+      }
+      
+      const { senderAddress, recipientEmail, amount, note, hasDeadline } = result.data;
+      const roundedAmount = Math.round(parseFloat(amount) * 100) / 100; // Round to 2 decimal places
+
+      console.log("Creating claim app for sender:", senderAddress);
+      
+      // Create a claim app
+      let claimApp;
       try {
-        console.log("Validated data:", JSON.stringify(validatedData, (key, value) => 
-          typeof value === 'bigint' ? value.toString() : value
-        ));
-      } catch (e) {
-        console.log("Validated data: (could not stringify)");
+        claimApp = await createClaimApp(senderAddress);
+        console.log("Claim app created successfully:", claimApp);
+      } catch (error) {
+        console.error("Failed to create claim app:", error);
+        return res.status(500).json({ message: "Failed to create claim app" });
       }
       
-      if (!validatedData.senderAddress) {
-        console.error("Error: senderAddress is undefined or empty");
-        return res.status(400).json({ message: "Sender address is required" });
+      if (!claimApp || !claimApp.appAddress) {
+        console.error("Invalid claim app result - missing app address");
+        return res.status(500).json({ message: "Failed to get valid app address" });
       }
       
-      // Generate a unique claim token
-      const claimToken = uuidv4();
-      console.log("Generated claim token:", claimToken);
+      // Generate a unique claim token (or use the one from createClaimApp)
+      const claimToken = claimApp.claimToken;
       
-      // Prepare the complete escrow deployment (atomic transaction)
-      console.log("Preparing complete escrow deployment with atomic transactions...");
-      let deploymentResult;
+      // Expiration date for deadline option (14 days from now)
+      const expirationDate = hasDeadline 
+        ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+        : null;
+            
+      // Create a transaction record in our database
+      const transaction = await storage.createTransaction({
+        senderAddress,
+        recipientEmail,
+        amount: roundedAmount.toString(),
+        note: note || "",
+        claimToken,
+        appAddress: claimApp.appAddress, // Use app address 
+        appId: claimApp.appId, // Store the app ID
+        approach: "app", // Mark as using the app-based approach
+      });
       
       try {
-        // This creates an atomic transaction that:
-        // 1. Creates and funds escrow account
-        // 2. Opts it into USDC
-        // 3. Transfers USDC to it
-        deploymentResult = await prepareCompleteEscrowDeployment(
-          validatedData.senderAddress,
-          parseFloat(validatedData.amount)
+        // Generate transactions for funding the app
+        const unsignedTxns: Uint8Array[] = [];
+        const txnsBase64: string[] = [];
+        const allTxnsBase64: string[] = [];
+        
+        // Prepare the app funding transactions
+        const appFundingTxns = await prepareAppFundingTransactions(
+          senderAddress,
+          claimApp.appId,
+          claimApp.appAddress,
+          roundedAmount
         );
         
-        console.log("Created escrow deployment with address:", deploymentResult.escrowAddress);
-      } catch (error) {
-        console.error("Error preparing escrow deployment:", error);
-        return res.status(500).json({ 
-          message: "Failed to prepare escrow deployment", 
-          error: error && typeof error === 'object' && 'message' in error && 
-            typeof error.message === 'string' ? error.message : "Unknown error"
-        });
-      }
-      
-      const { escrowAddress, unsignedTxns, allTransactions } = deploymentResult;
-      
-      // Get the compiled TEAL program - in algosdk 3.2.0 it's directly available
-      const compiledTealProgram = deploymentResult.compiledProgram || '';
-      const tealSource = deploymentResult.tealSource || '';
-      const tealSalt = deploymentResult.tealSalt || '';
-      
-      if (!compiledTealProgram) {
-        console.error("Failed to get compiled TEAL program from LogicSig");
-        return res.status(500).json({ message: "Failed to prepare escrow deployment - could not get compiled program" });
-      }
-      
-      console.log("Compiled TEAL program obtained, length:", compiledTealProgram.length);
-      console.log("TEAL source code obtained, length:", tealSource.length);
-      console.log("TEAL salt obtained:", tealSalt);
-      
-      // Store transaction in database with both the compiled TEAL program, the original TEAL source, and the salt
-      const transaction = await storage.createTransaction({
-        senderAddress: validatedData.senderAddress,
-        recipientEmail: validatedData.recipientEmail,
-        amount: validatedData.amount,
-        note: validatedData.note,
-        smartContractAddress: escrowAddress,
-        compiledTealProgram: compiledTealProgram, // Store the compiled program
-        tealSource: tealSource, // Store the original TEAL source code
-        tealSalt: tealSalt, // Store the salt used to create the TEAL program
-        claimToken: claimToken,
-      });
-      
-      console.log("Stored transaction with id:", transaction.id);
-      
-      // Encode the transactions to base64 for sending to frontend
-      let txnsBase64: string[] = [];
-      let allTxnsBase64: string[] = [];
-      
-      try {
-        // Convert transactions that need to be signed by the user
-        console.log(`Encoding ${unsignedTxns.length} transactions to be signed to base64`);
-        unsignedTxns.forEach((txn: Uint8Array, i: number) => {
-          // Use try-catch to validate each transaction
-          try {
-            // Verify the transaction can be decoded
-            const decodedTxn = algosdk.decodeUnsignedTransaction(txn);
-            console.log(`Transaction ${i+1} successfully decoded with type: ${decodedTxn.type}`);
-          } catch (e) {
-            console.error(`Transaction ${i+1} failed decoding check:`, e);
-          }
-          
-          txnsBase64.push(Buffer.from(txn).toString('base64'));
-          console.log(`Encoded transaction ${i+1} for signing`);
-        });
+        // Add transactions that need signing by the sender
+        unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO
+        unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app
         
-        // Convert all transactions in the group (including pre-signed ones)
-        if (allTransactions) {
-          console.log(`Encoding ${allTransactions.length} total transactions including pre-signed`);
-          allTransactions.forEach((txn: Uint8Array, i: number) => {
-            allTxnsBase64.push(Buffer.from(txn).toString('base64'));
-            console.log(`Encoded all-transaction ${i+1}`);
-          });
-        }
-      } catch (error) {
-        console.error("Error encoding transactions:", error);
-        return res.status(500).json({ message: "Failed to encode transactions" });
-      }
-      
-      // Create transaction parameters for the frontend
-      const txParams = {
-        txnsBase64,            // Transactions that need signing
-        allTxnsBase64,         // All transactions including pre-signed ones
-        senderAddress: validatedData.senderAddress,
-        escrowAddress: escrowAddress,
-        amount: parseFloat(validatedData.amount)
-      };
-      
-      // Send email to recipient
-      const emailSent = await sendClaimEmail({
-        recipientEmail: validatedData.recipientEmail,
-        amount: validatedData.amount,
-        note: validatedData.note,
-        senderAddress: validatedData.senderAddress,
-        claimToken: claimToken,
-        appDomain: getAppDomain(req),
-      });
-      
-      return res.status(201).json({
-        ...transaction,
-        emailSent,
-        txParams
-      });
-    } catch (error) {
-      console.error("Error creating transaction:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          message: "Invalid input data",
-          errors: error.errors,
-        });
-      }
-      return res.status(500).json({ message: "Failed to create transaction" });
-    }
-  });
-
-  // Claim USDC
-  app.post("/api/claim", async (req: Request, res: Response) => {
-    try {
-      const validatedData = claimUsdcSchema.parse(req.body);
-      
-      // Get transaction by claim token
-      const transaction = await storage.getTransactionByClaimToken(validatedData.claimToken);
-      
-      if (!transaction) {
-        return res.status(404).json({ message: "Transaction not found" });
-      }
-      
-      if (transaction.claimed) {
-        return res.status(400).json({ message: "Funds have already been claimed" });
-      }
-      
-      console.log("Preparing claim transaction for escrow:", transaction.smartContractAddress);
-      
-      try {
-        // Use the stored compiled TEAL program to claim from the escrow
-        console.log("Using stored compiled TEAL program for claim");
-        
-        // Verify we have the compiled program
-        if (!transaction.compiledTealProgram) {
-          console.error("Transaction doesn't have compiled TEAL program");
-          return res.status(500).json({ message: "Transaction data incomplete - missing compiled program" });
-        }
-        
-        let txId: string;
-        
+        // Convert transactions to base64 for sending to the frontend
         try {
-          console.log("Attempting claim transaction...");
-          
-          // Debug the escrow to see if we can recreate it properly
-          await debugEscrow(transaction);
-          
-          txId = await claimFromEscrowWithCompiledTeal({
-            escrowAddress: transaction.smartContractAddress,
-            recipientAddress: validatedData.recipientAddress,
-            amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram,
-            tealSource: transaction.tealSource || undefined, // Pass the TEAL source if available
-            tealSalt: transaction.tealSalt || undefined, // Pass the salt if available
-            senderAddress: transaction.senderAddress // Pass the original sender address
+          console.log(`Encoding ${unsignedTxns.length} unsigned transactions`);
+          unsignedTxns.forEach((txn: Uint8Array, i: number) => {
+            txnsBase64.push(Buffer.from(txn).toString('base64'));
+            console.log(`Encoded unsigned transaction ${i+1}`);
           });
-          console.log(`Claim successful with txId: ${txId}`);
-        } catch (error: any) {
-          console.error("Claim transaction error:", error);
           
-          // Check if this is our specific USDC_OPT_IN_REQUIRED error
-          if (error.message === "USDC_OPT_IN_REQUIRED") {
-            // Return a response that the frontend can use to guide the user to opt in
-            return res.status(400).json({
-              message: "Recipient not opted in to USDC",
-              requiresOptIn: true,
-              assetId: USDC_ASSET_ID,
-              address: error.address || validatedData.recipientAddress,
-              errorCode: "USDC_OPT_IN_REQUIRED"
+          // Include all transactions (including opt-in)
+          const allTransactions = [
+            appFundingTxns.appFundingTxn,
+            appFundingTxns.usdcOptInTxn,
+            appFundingTxns.usdcTransferTxn
+          ];
+          
+          // Convert all transactions in the group (including pre-signed ones)
+          if (allTransactions) {
+            console.log(`Encoding ${allTransactions.length} total transactions including pre-signed`);
+            allTransactions.forEach((txn: Uint8Array, i: number) => {
+              allTxnsBase64.push(Buffer.from(txn).toString('base64'));
+              console.log(`Encoded all-transaction ${i+1}`);
             });
           }
-          
-          // Otherwise, pass the error through
-          throw error;
+        } catch (error) {
+          console.error("Error encoding transactions:", error);
+          return res.status(500).json({ message: "Failed to encode transactions" });
         }
         
-        console.log(`Claim transaction successful with txId: ${txId}`);
+        // Create transaction parameters for the frontend
+        const txParams = {
+          txnsBase64,            // Transactions that need signing
+          allTxnsBase64,         // All transactions including pre-signed ones
+          appAddress: claimApp.appAddress,
+          appId: claimApp.appId,
+          transactionId: transaction.id
+        };
         
-        // Update transaction as claimed
-        const updatedTransaction = await storage.markTransactionAsClaimed(
-          transaction.id,
-          validatedData.recipientAddress,
-          txId
-        );
+        // Attempted to send the claim email in background without delaying response
+        const appDomain = getAppDomain(req);
+        sendClaimEmail({
+          recipientEmail,
+          amount: roundedAmount.toString(),
+          note: note || "",
+          senderAddress,
+          claimToken,
+          appDomain
+        }).catch(emailError => {
+          console.error("Email sending failed:", emailError);
+          // We don't return an error here because the transaction is still valid
+          // and the user can manually share the claim link
+        });
+
+        return res.json({
+          success: true,
+          appAddress: claimApp.appAddress,
+          appId: claimApp.appId,
+          claimLink: `${appDomain}/claim/${claimToken}`,
+          claimToken,
+          transactions: txParams,
+          transactionId: transaction.id
+        });
+      } catch (error) {
+        console.error("Error preparing transactions:", error);
+        return res.status(500).json({ message: "Failed to prepare app funding transactions" });
+      }
+    } catch (error) {
+      console.error("Send API error:", error);
+      return res.status(500).json({ message: "Failed to create claim transaction" });
+    }
+  });
+  
+  // Claim USDC from a transaction
+  app.post("/api/claim", async (req: Request, res: Response) => {
+    try {
+      const result = claimUsdcSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.message });
+      }
+      
+      const { claimToken, recipientAddress } = result.data;
+      
+      // Look up transaction by claim token
+      const transaction = await storage.getTransactionByClaimToken(claimToken);
+      
+      if (!transaction) {
+        return res.status(404).json({ message: "Transaction not found" });
+      }
+      
+      if (transaction.claimed) {
+        return res.status(400).json({ message: "Transaction already claimed" });
+      }
+      
+      // Check if the transaction has an expiration date and if it's expired
+      if (transaction.expiresAt && new Date(transaction.expiresAt) < new Date()) {
+        return res.status(400).json({ message: "Transaction has expired" });
+      }
+      
+      try {
+        let txnsBase64 = [];
+        
+        // Use the appropriate claim method based on the approach
+        if (transaction.approach === 'app' && transaction.appId && transaction.appAddress) {
+          // Use app-based approach
+          console.log(`Preparing to claim from app ${transaction.appId} at address ${transaction.appAddress}`);
+          
+          // Prepare the claim transaction
+          const claimTxn = await prepareClaimTransaction(
+            transaction.appId,
+            transaction.appAddress,
+            recipientAddress,
+            parseFloat(transaction.amount)
+          );
+          
+          // Encode the transaction as base64
+          txnsBase64.push(Buffer.from(claimTxn).toString('base64'));
+        } else {
+          // Use LogicSig escrow approach (default/backward compatibility)
+          console.log(`Preparing to claim from escrow using LogicSig at address ${transaction.escrowAddress}`);
+          
+          // If we have the compiled TEAL program, use it directly
+          if (transaction.compiledTealProgram) {
+            console.log("Using stored compiled TEAL program");
+            const txn = await claimFromEscrowWithCompiledTeal({
+              escrowAddress: transaction.escrowAddress || "",
+              compiledTeal: transaction.compiledTealProgram,
+              tealSource: transaction.tealSource || "",
+              salt: transaction.tealSalt || "",
+              recipientAddress,
+              amount: parseFloat(transaction.amount)
+            });
+            
+            txnsBase64.push(Buffer.from(txn).toString('base64'));
+          } else {
+            console.log("No compiled TEAL program available, generating new LogicSig");
+            // Otherwise, try to generate a new LogicSig
+            const txn = await claimFromEscrow(
+              transaction.escrowLogicSig || "",
+              transaction.escrowAddress || "",
+              recipientAddress,
+              parseFloat(transaction.amount)
+            );
+            
+            txnsBase64.push(Buffer.from(txn).toString('base64'));
+          }
+        }
         
         return res.json({
-          ...updatedTransaction,
-          transactionId: txId,
-          success: true
+          success: true,
+          transactionId: transaction.id,
+          txnsBase64
         });
-      } catch (txError: any) {
-        console.error("Error creating claim transaction:", txError);
-        
-        // Check if this is an opt-in error
-        const errorMessage = txError.message || "Unknown error";
-        if (errorMessage.includes("not opted into USDC") || errorMessage.includes("Please opt-in")) {
-          return res.status(400).json({ 
-            message: "Recipient not opted in",
-            error: errorMessage,
-            requiresOptIn: true,
-            assetId: USDC_ASSET_ID
-          });
-        }
-        
-        return res.status(500).json({ 
-          message: "Failed to create claim transaction", 
-          error: errorMessage
-        });
+      } catch (error) {
+        console.error("Error preparing claim transaction:", error);
+        return res.status(500).json({ message: `Failed to prepare claim transaction: ${error}` });
       }
     } catch (error) {
-      console.error("Error claiming transaction:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          message: "Invalid input data",
-          errors: error.errors,
-        });
-      }
-      return res.status(500).json({ message: "Failed to claim transaction" });
+      console.error("Claim API error:", error);
+      return res.status(500).json({ message: "Failed to process claim request" });
     }
   });
-
-  // Get transaction by claim token
+  
+  // Get claim details
   app.get("/api/claim/:token", async (req: Request, res: Response) => {
     try {
-      const { token } = req.params;
+      const claimToken = req.params.token;
       
-      const transaction = await storage.getTransactionByClaimToken(token);
+      if (!claimToken) {
+        return res.status(400).json({ message: "Claim token is required" });
+      }
+      
+      const transaction = await storage.getTransactionByClaimToken(claimToken);
       
       if (!transaction) {
         return res.status(404).json({ message: "Transaction not found" });
       }
       
-      return res.json(transaction);
+      // Return claim details
+      return res.json({
+        success: true,
+        transaction: {
+          id: transaction.id,
+          senderAddress: transaction.senderAddress,
+          amount: transaction.amount,
+          note: transaction.note,
+          claimed: transaction.claimed,
+          approach: transaction.approach || "logicsig", // Default to logicsig for backward compatibility
+          appId: transaction.appId,  // Will be undefined for logicsig approach
+          appAddress: transaction.appAddress, // Will be undefined for logicsig approach
+        }
+      });
     } catch (error) {
-      console.error("Error fetching claim:", error);
-      return res.status(500).json({ message: "Failed to fetch claim details" });
+      console.error("Error getting claim details:", error);
+      return res.status(500).json({ message: "Failed to get claim details" });
     }
   });
-
-  // Regenerate claim link
+  
+  // Regenerate a claim link
   app.post("/api/regenerate-link", async (req: Request, res: Response) => {
     try {
-      const validatedData = regenerateClaimLinkSchema.parse(req.body);
+      const result = regenerateClaimLinkSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.message });
+      }
       
-      // Get transaction
-      const transaction = await storage.getTransactionById(validatedData.transactionId);
+      const { transactionId } = result.data;
+      
+      // Look up transaction by ID
+      const transaction = await storage.getTransactionById(transactionId);
       
       if (!transaction) {
         return res.status(404).json({ message: "Transaction not found" });
       }
       
-      // Verify sender is the original sender
-      if (transaction.senderAddress !== validatedData.senderAddress) {
-        return res.status(403).json({ message: "Unauthorized to regenerate this link" });
-      }
-      
-      // Check if already claimed
       if (transaction.claimed) {
-        return res.status(400).json({ message: "Funds have already been claimed" });
+        return res.status(400).json({ message: "Transaction already claimed" });
       }
       
-      // Generate new claim token
-      const updatedTransaction = await storage.updateTransactionClaimToken(
-        transaction.id
-      );
+      // Generate a new claim token
+      const updatedTransaction = await storage.updateTransactionClaimToken(transactionId);
       
-      // Send email to recipient with new link
-      const emailSent = await sendClaimEmail({
-        recipientEmail: transaction.recipientEmail,
-        amount: transaction.amount,
-        note: transaction.note || undefined,
-        senderAddress: transaction.senderAddress,
-        claimToken: updatedTransaction!.claimToken,
-        appDomain: getAppDomain(req),
-      });
+      if (!updatedTransaction) {
+        return res.status(500).json({ message: "Failed to update claim token" });
+      }
+      
+      // Send an email with the new claim link
+      const appDomain = getAppDomain(req);
+      try {
+        await sendClaimEmail({
+          recipientEmail: transaction.recipientEmail,
+          amount: transaction.amount,
+          note: transaction.note || "",
+          senderAddress: transaction.senderAddress,
+          claimToken: updatedTransaction.claimToken,
+          appDomain
+        });
+      } catch (emailError) {
+        console.error("Email sending failed:", emailError);
+        // We still return success since the token was updated
+      }
       
       return res.json({
-        ...updatedTransaction,
-        emailSent,
+        success: true,
+        claimLink: `${appDomain}/claim/${updatedTransaction.claimToken}`,
+        claimToken: updatedTransaction.claimToken
       });
     } catch (error) {
-      console.error("Error regenerating claim link:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          message: "Invalid input data",
-          errors: error.errors,
-        });
-      }
+      console.error("Regenerate link API error:", error);
       return res.status(500).json({ message: "Failed to regenerate claim link" });
     }
   });
-
-  // Reclaim USDC
+  
+  // Reclaim USDC from a transaction
   app.post("/api/reclaim", async (req: Request, res: Response) => {
     try {
-      const validatedData = reclaimUsdcSchema.parse(req.body);
+      const result = reclaimUsdcSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.message });
+      }
       
-      // Get transaction
-      const transaction = await storage.getTransactionById(validatedData.transactionId);
+      const { transactionId, senderAddress } = result.data;
+      
+      // Look up transaction by ID
+      const transaction = await storage.getTransactionById(transactionId);
       
       if (!transaction) {
         return res.status(404).json({ message: "Transaction not found" });
       }
       
-      // Verify sender is the original sender
-      if (transaction.senderAddress !== validatedData.senderAddress) {
-        return res.status(403).json({ message: "Unauthorized to reclaim these funds" });
-      }
-      
-      // Check if already claimed
       if (transaction.claimed) {
-        return res.status(400).json({ message: "Funds have already been claimed" });
+        return res.status(400).json({ message: "Transaction already claimed" });
       }
       
-      console.log("Preparing reclaim transaction from escrow:", transaction.smartContractAddress);
-      
-      // Verify we have the compiled program
-      if (!transaction.compiledTealProgram) {
-        console.error("Transaction doesn't have compiled TEAL program");
-        return res.status(500).json({ message: "Transaction data incomplete - missing compiled program" });
+      // Verify the sender address matches
+      if (transaction.senderAddress !== senderAddress) {
+        return res.status(403).json({ message: "Not authorized to reclaim this transaction" });
       }
       
       try {
-        // Use the stored compiled TEAL program for reclaim
-        console.log("Using stored compiled TEAL program for reclaim");
+        let txnsBase64 = [];
         
-        // Variable to store transaction ID
-        let txId: string;
-        
-        try {
-          console.log("Attempting reclaim transaction...");
+        // Use the appropriate reclaim method based on the approach
+        if (transaction.approach === 'app' && transaction.appId && transaction.appAddress) {
+          // Use app-based approach
+          console.log(`Preparing to reclaim from app ${transaction.appId} at address ${transaction.appAddress}`);
           
-          // Debug the escrow to see if we can recreate it properly
-          await debugEscrow(transaction);
+          // Prepare the reclaim transaction
+          const reclaimTxn = await prepareReclaimTransaction(
+            transaction.appId,
+            transaction.appAddress,
+            senderAddress,
+            parseFloat(transaction.amount)
+          );
           
-          txId = await claimFromEscrowWithCompiledTeal({
-            escrowAddress: transaction.smartContractAddress,
-            recipientAddress: validatedData.senderAddress,
-            amount: parseFloat(transaction.amount),
-            compiledTealProgram: transaction.compiledTealProgram,
-            tealSource: transaction.tealSource || undefined, // Pass the TEAL source if available
-            tealSalt: transaction.tealSalt || undefined, // Pass the salt if available
-            senderAddress: transaction.senderAddress // Pass the original sender address
-          });
-          console.log(`Reclaim successful with txId: ${txId}`);
-        } catch (error: any) {
-          console.error("Reclaim transaction error:", error);
+          // Encode the transaction as base64
+          txnsBase64.push(Buffer.from(reclaimTxn).toString('base64'));
+        } else {
+          // Use LogicSig escrow approach (default/backward compatibility)
+          console.log(`Preparing to reclaim from escrow using LogicSig at address ${transaction.escrowAddress}`);
           
-          // Check if this is our specific USDC_OPT_IN_REQUIRED error
-          if (error.message === "USDC_OPT_IN_REQUIRED") {
-            // Return a response that the frontend can use to guide the user to opt in
-            return res.status(400).json({
-              message: "Sender not opted in to USDC",
-              requiresOptIn: true,
-              assetId: USDC_ASSET_ID,
-              address: error.address || validatedData.senderAddress,
-              errorCode: "USDC_OPT_IN_REQUIRED"
-            });
-          }
+          const txn = await reclaimFromEscrow(
+            transaction.escrowLogicSig || "",
+            transaction.escrowAddress || "",
+            senderAddress,
+            parseFloat(transaction.amount)
+          );
           
-          // Otherwise, pass the error through
-          throw error;
+          txnsBase64.push(Buffer.from(txn).toString('base64'));
         }
-        
-        console.log(`Reclaim transaction successful with txId: ${txId}`);
-        
-        // Update transaction as claimed by sender (reclaimed)
-        const updatedTransaction = await storage.markTransactionAsClaimed(
-          transaction.id,
-          validatedData.senderAddress,
-          txId
-        );
         
         return res.json({
-          ...updatedTransaction,
           success: true,
-          transactionId: txId
+          transactionId: transaction.id,
+          txnsBase64
         });
-      } catch (reclaimError: any) {
-        console.error("Error executing reclaim transaction:", reclaimError);
-        
-        // Check if this is an opt-in error
-        const errorMessage = reclaimError.message || "Unknown error";
-        if (errorMessage.includes("not opted into USDC") || errorMessage.includes("Please opt-in")) {
-          return res.status(400).json({ 
-            message: "Sender not opted in",
-            error: errorMessage,
-            requiresOptIn: true,
-            assetId: USDC_ASSET_ID
-          });
-        }
-        
-        return res.status(400).json({
-          message: "Failed to execute reclaim transaction",
-          error: reclaimError instanceof Error ? reclaimError.message : String(reclaimError)
-        });
+      } catch (error) {
+        console.error("Error preparing reclaim transaction:", error);
+        return res.status(500).json({ message: `Failed to prepare reclaim transaction: ${error}` });
       }
     } catch (error) {
-      console.error("Error reclaiming transaction:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          message: "Invalid input data",
-          errors: error.errors,
-        });
-      }
-      return res.status(500).json({ message: "Failed to reclaim transaction" });
+      console.error("Reclaim API error:", error);
+      return res.status(500).json({ message: "Failed to process reclaim request" });
     }
   });
-
-  const httpServer = createServer(app);
-  return httpServer;
+  
+  // Return the app instance to caller so other middleware can be attached
+  console.log('Routes registered successfully');
+  return new Server(app);
 }
