@@ -1,0 +1,146 @@
+  // Create a new transaction (send USDC)
+  app.post("/api/send", async (req: Request, res: Response) => {
+    try {
+      // Safe stringify to handle BigInt
+      try {
+        console.log("Send API received request:", JSON.stringify(req.body, (key, value) => 
+          typeof value === 'bigint' ? value.toString() : value
+        ));
+      } catch (e) {
+        console.log("Send API received request (stringification failed):", req.body);
+      }
+      
+      const result = sendUsdcSchema.safeParse(req.body);
+      if (!result.success) {
+        console.error("Validation error:", result.error);
+        return res.status(400).json({ message: result.error.message });
+      }
+      
+      const { senderAddress, recipientEmail, amount, note, hasDeadline } = result.data;
+      const roundedAmount = Math.round(amount * 100) / 100; // Round to 2 decimal places
+
+      console.log("Creating claim app for sender:", senderAddress);
+      
+      // Create a claim app
+      let claimApp;
+      try {
+        claimApp = await createClaimApp(senderAddress);
+        console.log("Claim app created successfully:", claimApp);
+      } catch (error) {
+        console.error("Failed to create claim app:", error);
+        return res.status(500).json({ message: "Failed to create claim app" });
+      }
+      
+      if (!claimApp || !claimApp.appAddress) {
+        console.error("Invalid claim app result - missing app address");
+        return res.status(500).json({ message: "Failed to get valid app address" });
+      }
+      
+      // Generate a unique claim token (or use the one from createClaimApp)
+      const claimToken = claimApp.claimToken;
+      
+      // Expiration date for deadline option (14 days from now)
+      const expirationDate = hasDeadline 
+        ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+        : null;
+            
+      // Create a transaction record in our database
+      const transaction = await storage.createTransaction({
+        senderAddress,
+        recipientEmail,
+        amount: roundedAmount.toString(),
+        note: note || "",
+        claimToken,
+        appAddress: claimApp.appAddress, // Use app address 
+        appId: claimApp.appId, // Store the app ID
+        approach: "app", // Mark as using the app-based approach
+      });
+      
+      try {
+        // Generate transactions for funding the app
+        const unsignedTxns: Uint8Array[] = [];
+        const txnsBase64: string[] = [];
+        const allTxnsBase64: string[] = [];
+        
+        // Prepare the app funding transactions
+        const appFundingTxns = await prepareAppFundingTransactions(
+          senderAddress,
+          claimApp.appId,
+          claimApp.appAddress,
+          roundedAmount
+        );
+        
+        // Add transactions that need signing by the sender
+        unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO
+        unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app
+        
+        // Convert transactions to base64 for sending to the frontend
+        try {
+          console.log(`Encoding ${unsignedTxns.length} unsigned transactions`);
+          unsignedTxns.forEach((txn: Uint8Array, i: number) => {
+            txnsBase64.push(Buffer.from(txn).toString('base64'));
+            console.log(`Encoded unsigned transaction ${i+1}`);
+          });
+          
+          // Include all transactions (including opt-in)
+          const allTransactions = [
+            appFundingTxns.appFundingTxn,
+            appFundingTxns.usdcOptInTxn,
+            appFundingTxns.usdcTransferTxn
+          ];
+          
+          // Convert all transactions in the group (including pre-signed ones)
+          if (allTransactions) {
+            console.log(`Encoding ${allTransactions.length} total transactions including pre-signed`);
+            allTransactions.forEach((txn: Uint8Array, i: number) => {
+              allTxnsBase64.push(Buffer.from(txn).toString('base64'));
+              console.log(`Encoded all-transaction ${i+1}`);
+            });
+          }
+        } catch (error) {
+          console.error("Error encoding transactions:", error);
+          return res.status(500).json({ message: "Failed to encode transactions" });
+        }
+        
+        // Create transaction parameters for the frontend
+        const txParams = {
+          txnsBase64,            // Transactions that need signing
+          allTxnsBase64,         // All transactions including pre-signed ones
+          appAddress: claimApp.appAddress,
+          appId: claimApp.appId,
+          transactionId: transaction.id
+        };
+        
+        // Attempted to send the claim email in background without delaying response
+        const appDomain = getAppDomain(req);
+        sendClaimEmail({
+          recipientEmail,
+          amount: roundedAmount.toString(),
+          note: note || "",
+          senderAddress,
+          claimToken,
+          appDomain
+        }).catch(emailError => {
+          console.error("Email sending failed:", emailError);
+          // We don't return an error here because the transaction is still valid
+          // and the user can manually share the claim link
+        });
+
+        return res.json({
+          success: true,
+          appAddress: claimApp.appAddress,
+          appId: claimApp.appId,
+          claimLink: `${appDomain}/claim/${claimToken}`,
+          claimToken,
+          transactions: txParams,
+          transactionId: transaction.id
+        });
+      } catch (error) {
+        console.error("Error preparing transactions:", error);
+        return res.status(500).json({ message: "Failed to prepare app funding transactions" });
+      }
+    } catch (error) {
+      console.error("Send API error:", error);
+      return res.status(500).json({ message: "Failed to create claim transaction" });
+    }
+  });
