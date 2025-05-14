@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { useWallet, SignerTransaction } from "@txnlab/use-wallet-react";
+import { useWallet } from "@txnlab/use-wallet-react";
+import algosdk from "algosdk";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -269,8 +270,6 @@ export function useAlgorand() {
 
   // Sign transaction with wallet and submit
   const signAndSubmitTransaction = async (txnBase64: string, transactionId: number): Promise<boolean> => {
-    const { activeAccount, signTransactions } = useWallet();
-    
     if (!activeAccount || !signTransactions) {
       toast({
         title: "Wallet Not Connected",
@@ -283,22 +282,29 @@ export function useAlgorand() {
     try {
       setIsLoading(true);
       
-      // For @txnlab/use-wallet-react, we need to prepare the transaction for signing
-      const signer: SignerTransaction[] = [{
-        txn: txnBase64,
+      // Decode the base64 transaction to get the binary transaction data
+      const txnBytes = Buffer.from(txnBase64, 'base64');
+      
+      // Convert to an Algorand transaction object
+      const txn = algosdk.decodeUnsignedTransaction(txnBytes);
+      
+      // Sign the transaction with the wallet
+      const singleTxnGroups = [{
+        txn: txn,
         signers: [activeAccount.address]
       }];
       
-      // Sign the transaction with the wallet
-      const signedTransactions = await signTransactions(signer);
+      const signedTransactions = await signTransactions(singleTxnGroups);
       
       if (!signedTransactions || signedTransactions.length === 0) {
         throw new Error("Failed to sign transaction");
       }
       
-      // Submit the signed transaction
+      // The wallet should return a signed transaction Uint8Array that we need to convert to base64
+      const signedTxnBase64 = Buffer.from(signedTransactions[0] || new Uint8Array()).toString('base64');
+      
       const result = await submitSignedTransaction({
-        signedTxn: signedTransactions[0], 
+        signedTxn: signedTxnBase64,
         transactionId
       });
       
