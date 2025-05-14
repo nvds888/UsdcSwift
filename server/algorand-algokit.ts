@@ -316,16 +316,13 @@ export async function prepareCompleteEscrowDeployment(
     
     // Transaction 3: Send USDC to escrow
     const microAmount = Math.floor(amount * 1_000_000); // Convert to microUSDC
-    const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParams(
-      senderAddress,       // from
-      escrowAddress,       // to
-      undefined,           // closeRemainderTo
-      undefined,           // revocationTarget
-      microAmount,         // amount (in micro-units)
-      undefined,           // note
-      USDC_ASSET_ID,       // assetIndex
-      params               // suggestedParams
-    );
+    const assetTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      from: senderAddress,
+      to: escrowAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      suggestedParams: params
+    });
     
     console.log(`Created USDC transfer transaction: ${assetTransferTxn.txID()}`);
     txns.push(assetTransferTxn);
