@@ -72,85 +72,99 @@ export function useAlgorand() {
     }
   };
   
-  // Sign and submit transactions as part of an atomic group
-  // Fixed version that passes all transactions but only signs specific ones
+  // Sign and submit transactions sequentially (non-atomic)
   const signAndSubmitAtomicGroup = async (
     txnsToSign: string[],
     allTxns: string[],
     transactionId: number
   ): Promise<boolean> => {
     try {
-      console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
+      console.log(`Processing sequential transactions: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // Convert all transactions to Uint8Array format
-      const allTxnBinaries: Uint8Array[] = allTxns.map(txn => 
-        new Uint8Array(Buffer.from(txn, 'base64'))
-      );
+      // 1. Handle the funding transaction (first transaction)
+      console.log("Processing funding transaction (first transaction)");
+      const fundingTxnBinary = new Uint8Array(Buffer.from(allTxns[0], 'base64'));
       
-      // Find which indexes need signing
-      const indexesToSign: number[] = [];
+      // Sign funding transaction with wallet
+      const signedFundingTxns = await signTransactions([fundingTxnBinary]);
       
-      for (let i = 0; i < allTxns.length; i++) {
-        // Check if this transaction is in the list of transactions to sign
-        if (txnsToSign.includes(allTxns[i])) {
-          indexesToSign.push(i);
-          console.log(`Transaction ${i} needs signing`);
-        } else {
-          console.log(`Transaction ${i} is pre-signed or doesn't need signing`);
-        }
-      }
-      
-      console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
-      
-      // Pass ALL transactions to the wallet, but specify which ones to sign
-      // The wallet will validate the group and only sign the specified indexes
-      const signedTxns = await signTransactions(allTxnBinaries, indexesToSign);
-      
-      if (!signedTxns || signedTxns.length !== allTxnBinaries.length) {
-        console.error("Failed to sign transactions properly");
+      if (!signedFundingTxns || !signedFundingTxns[0]) {
+        console.error("Failed to sign funding transaction");
         return false;
       }
       
-      // The wallet returns the full array with signed transactions at the specified indexes
-      // and null values at other indexes
-      const finalTxns: Uint8Array[] = [];
-      
-      for (let i = 0; i < signedTxns.length; i++) {
-        const signedTxn = signedTxns[i];
-        if (signedTxn !== null && signedTxn !== undefined) {
-          // This was signed by the wallet
-          finalTxns.push(signedTxn);
-        } else {
-          // This was pre-signed or not meant to be signed - use original
-          finalTxns.push(allTxnBinaries[i]);
-        }
-      }
-      
-      // Submit the first transaction of the atomic group
-      // For Algorand, this will trigger the whole group to be processed
-      const response = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(finalTxns[0]).toString('base64'),
-        transactionId
+      // Submit the funding transaction
+      const fundingResponse = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: Buffer.from(signedFundingTxns[0]).toString('base64'),
+        transactionId,
+        isSequential: true,
+        sequentialIndex: 0
       });
       
-      if (!response.ok) {
-        console.error("Failed to submit transaction");
+      if (!fundingResponse.ok) {
+        console.error("Failed to submit funding transaction");
         return false;
       }
+      
+      console.log("Funding transaction submitted successfully");
+      
+      // 2. The opt-in transaction is pre-signed (second transaction)
+      console.log("Processing pre-signed opt-in transaction (second transaction)");
+      const optInTxnBinary = new Uint8Array(Buffer.from(allTxns[1], 'base64'));
+      
+      // Submit the pre-signed opt-in transaction
+      const optInResponse = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: Buffer.from(optInTxnBinary).toString('base64'),
+        transactionId,
+        isSequential: true,
+        sequentialIndex: 1
+      });
+      
+      if (!optInResponse.ok) {
+        console.error("Failed to submit opt-in transaction");
+        return false;
+      }
+      
+      console.log("Opt-in transaction submitted successfully");
+      
+      // 3. Handle the USDC transfer transaction (third transaction)
+      console.log("Processing USDC transfer transaction (third transaction)");
+      const transferTxnBinary = new Uint8Array(Buffer.from(allTxns[2], 'base64'));
+      
+      // Sign transfer transaction with wallet
+      const signedTransferTxns = await signTransactions([transferTxnBinary]);
+      
+      if (!signedTransferTxns || !signedTransferTxns[0]) {
+        console.error("Failed to sign transfer transaction");
+        return false;
+      }
+      
+      // Submit the transfer transaction
+      const transferResponse = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: Buffer.from(signedTransferTxns[0]).toString('base64'),
+        transactionId,
+        isSequential: true,
+        sequentialIndex: 2
+      });
+      
+      if (!transferResponse.ok) {
+        console.error("Failed to submit transfer transaction");
+        return false;
+      }
+      
+      console.log("Transfer transaction submitted successfully");
       
       return true;
     } catch (error) {
-      console.error("Error in atomic transaction group signing:", error);
+      console.error("Error in sequential transaction processing:", error);
       
       // Handle specific wallet errors
       if (error instanceof Error) {
-        if (error.message.includes("transaction group has failed validation")) {
-          toast({
-            title: "Transaction Group Error",
-            description: "The transactions could not be validated as a group. Please try again.",
-            variant: "destructive",
-          });
-        }
+        toast({
+          title: "Transaction Error",
+          description: error.message,
+          variant: "destructive",
+        });
       }
       
       return false;

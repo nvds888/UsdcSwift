@@ -389,9 +389,10 @@ export async function prepareCompleteEscrowDeployment(
     );
     txns.push(assetTransferTxn);
 
-    // Make them an atomic group
-    algosdk.assignGroupID(txns);
-    console.log(`Assigned group ID to transaction set`);
+    // IMPORTANT CHANGE: We're no longer using an atomic group
+    // Transactions will be signed and submitted sequentially
+    // algosdk.assignGroupID(txns);
+    console.log(`Transactions will be processed sequentially (no group ID assigned)`);
 
     // Sign the escrow opt-in transaction with logic signature
     const signedOptInTxn = algosdk.signLogicSigTransaction(
