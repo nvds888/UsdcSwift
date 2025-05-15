@@ -115,36 +115,36 @@ export function useAlgorand() {
       const finalTxns: Uint8Array[] = [];
       
       for (let i = 0; i < signedTxns.length; i++) {
+        // Handle possible null values from the wallet response
+        // by using a type assertion to tell TypeScript this is safe
         const signedTx = signedTxns[i];
         if (signedTx) {
           // This was signed by the wallet
-          finalTxns.push(signedTx);
+          finalTxns.push(signedTx as Uint8Array);
         } else {
           // This was pre-signed or not meant to be signed - use original
           finalTxns.push(allTxnBinaries[i]);
         }
       }
 
-      // Now submit each signed transaction sequentially
-      for (let i = 0; i < finalTxns.length; i++) {
-        console.log(`Submitting transaction ${i+1} of ${finalTxns.length}`);
-        
-        const submitResponse = await apiRequest("POST", "/api/submit-transaction", {
-          signedTxn: Buffer.from(finalTxns[i]).toString('base64'),
-          transactionId,
-          isSequential: true,
-          sequentialIndex: i
-        });
-        
-        if (!submitResponse.ok) {
-          console.error(`Failed to submit transaction ${i+1}`);
-          return false;
-        }
-        
-        console.log(`Transaction ${i+1} submitted successfully`);
+      // Submit all transactions as a group to the new atomic group endpoint
+      console.log(`Submitting all ${finalTxns.length} transactions as an atomic group`);
+      
+      // Convert all signed transactions to base64
+      const base64Txns = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
+      
+      // Submit to our new endpoint for atomic transaction groups
+      const submitResponse = await apiRequest("POST", "/api/submit-atomic-group", {
+        signedTxns: base64Txns,
+        transactionId
+      });
+      
+      if (!submitResponse.ok) {
+        console.error(`Failed to submit atomic transaction group`);
+        return false;
       }
       
-      console.log("All transactions in atomic group submitted successfully");
+      console.log("Atomic transaction group submitted successfully");
       
       // Invalidate transaction queries to force a refresh
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
