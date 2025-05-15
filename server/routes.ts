@@ -415,8 +415,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       try {
-        // Generate transactions for creating and funding the app
-        const unsignedTxns: Uint8Array[] = [];
         const txnsBase64: string[] = [];
         const allTxnsBase64: string[] = [];
         
@@ -483,9 +481,6 @@ return
           onComplete: onCompletionValue
         });
         
-        // Add the app creation transaction as the first transaction to sign
-        unsignedTxns.push(algosdk.encodeUnsignedTransaction(appCreateTxn));
-        
         // Prepare the app funding transactions
         const appFundingTxns = await prepareAppFundingTransactions(
           senderAddress,
@@ -494,13 +489,19 @@ return
           roundedAmount
         );
         
-        // First, we need to create the application 
-        // The user will sign this, and the application will be created on-chain
-        const appCreateTxnEncoded = algosdk.encodeUnsignedTransaction(appCreateTxn);
-        unsignedTxns.push(appCreateTxnEncoded);
+        // Create a transaction group with app creation and funding
+        const groupTxns = [
+          appCreateTxn,  // App creation transaction
+          algosdk.decodeUnsignedTransaction(appFundingTxns.appFundingTxn)  // Funding transaction  
+        ];
         
-        // Adding funding transaction to provide ALGOs to the application
-        unsignedTxns.push(appFundingTxns.appFundingTxn);
+        // Assign the group ID to make them execute as an atomic unit
+        algosdk.assignGroupID(groupTxns);
+        
+        // Encode the grouped transactions for sending to the client
+        const unsignedTxns = groupTxns.map(txn => 
+          algosdk.encodeUnsignedTransaction(txn)
+        );
         
         // For the opt-in and transfer, we'll handle those in a separate transaction group
         // after the app is created and funded
@@ -518,10 +519,10 @@ return
           });
           
           // For the first phase, we only need to create the app and fund it
-          // Phase 1: Create and fund the app
+          // Phase 1: Create and fund the app - using the grouped transactions from above
           const allTransactions = [
-            appCreateTxnEncoded,  // Create the app
-            appFundingTxns.appFundingTxn  // Fund the app with ALGOs
+            algosdk.encodeUnsignedTransaction(groupTxns[0]),  // Create the app (with group ID)
+            algosdk.encodeUnsignedTransaction(groupTxns[1])   // Fund the app with ALGOs (with group ID)
           ];
           
           // Phase 2 will be done after app is created:
