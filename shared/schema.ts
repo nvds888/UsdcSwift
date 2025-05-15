@@ -111,3 +111,4 @@ export type RegenerateClaimLinkInput = z.infer<typeof regenerateClaimLinkSchema>
 export type ReclaimUsdcInput = z.infer<typeof reclaimUsdcSchema>;
 export type SignedTransactionInput = z.infer<typeof signedTransactionSchema>;
 export type AtomicTransactionGroupInput = z.infer<typeof atomicTransactionGroupSchema>;
+export type CompleteFundingInput = z.infer<typeof completeFundingSchema>;
