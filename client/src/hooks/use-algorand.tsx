@@ -209,37 +209,42 @@ export function useAlgorand() {
       const res = await apiRequest("POST", "/api/send", params);
       const data = await res.json();
       
+      console.log("Server response:", data);
+      
       // Check which type of transaction we're dealing with
-      if (activeAccount && data.txParams) {
+      if (activeAccount && data.transactions) {
         let success = false;
+        console.log("Found transaction data:", data.transactions);
         
-        if (data.txParams.txnsBase64 && data.txParams.txnsBase64.length > 0) {
+        if (data.transactions.txnsBase64 && data.transactions.txnsBase64.length > 0) {
           // New atomic transaction format
-          console.log("Using atomic transaction format");
+          console.log("Using atomic transaction format with", data.transactions.txnsBase64.length, "transactions to sign");
           
           // Check if we have the full transaction group (including pre-signed txns)
-          if (data.txParams.allTxnsBase64 && data.txParams.allTxnsBase64.length > 0) {
-            console.log("Processing complete atomic transaction group");
+          if (data.transactions.allTxnsBase64 && data.transactions.allTxnsBase64.length > 0) {
+            console.log("Processing complete atomic transaction group with", data.transactions.allTxnsBase64.length, "total transactions");
             success = await signAndSubmitMultipleTransactions(
-              data.txParams.txnsBase64,
-              data.id,
-              data.txParams.allTxnsBase64
+              data.transactions.txnsBase64,
+              data.transactionId,
+              data.transactions.allTxnsBase64
             );
           } else {
             // Fallback to old method if allTxnsBase64 is not provided
             console.log("Using legacy multi-transaction format without group");
             success = await signAndSubmitMultipleTransactions(
-              data.txParams.txnsBase64,
-              data.id
+              data.transactions.txnsBase64,
+              data.transactionId
             );
           }
-        } else if (data.txParams.txnBase64) {
+        } else if (data.transactions.txnBase64) {
           // Legacy single transaction format
           console.log("Using legacy transaction format");
           success = await signAndSubmitTransaction(
-            data.txParams.txnBase64,
-            data.id
+            data.transactions.txnBase64,
+            data.transactionId
           );
+        } else {
+          console.error("No valid transaction format found in response");
         }
         
         if (!success) {
@@ -249,6 +254,8 @@ export function useAlgorand() {
             description: "Transaction was created but not signed. The recipient can still claim after you fund the escrow account."
           });
         }
+      } else {
+        console.error("No transaction data found in response or no active account");
       }
       
       // Invalidate transactions cache
