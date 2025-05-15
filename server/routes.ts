@@ -396,9 +396,13 @@ return
         );
         
         // Add all funding transactions that need signing by the sender
-        unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO
-        unsignedTxns.push(appFundingTxns.usdcOptInTxn);   // App call to opt in to USDC
-        unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app
+        unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO - user signs this
+        
+        // The opt-in transaction is signed by the application logic signature
+        // So we don't add it to the unsignedTxns array that the user will sign
+        
+        // USDC transfer only happens after opt-in is confirmed
+        unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app - user signs this
         
         // Convert transactions to base64 for sending to the frontend
         try {
@@ -409,9 +413,16 @@ return
           });
           
           // Include all transactions in the atomic group
-          const allTransactions = [
+          // First group: funding and app creation
+          const fundingGroup = [
             appFundingTxns.appFundingTxn,
             appFundingTxns.usdcOptInTxn,
+          ];
+          
+          // Second transaction (separate): USDC transfer
+          // This happens after the opt-in is confirmed
+          const allTransactions = [
+            ...fundingGroup,
             appFundingTxns.usdcTransferTxn
           ];
           

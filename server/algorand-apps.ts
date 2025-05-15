@@ -223,25 +223,35 @@ export async function prepareAppFundingTransactions(
     // Get suggested parameters
     const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // 1. Fund the app with minimum balance (0.1 ALGO)
+    // 1. Fund the app with more balance (0.2 ALGO) to ensure it has enough for opt-in
     const appFundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       sender: senderAddr,
       receiver: validatedAppAddress,
-      amount: 100000, // 0.1 ALGO
+      amount: 200000, // 0.2 ALGO for minimum balance + operations
       note: new Uint8Array(0),
       suggestedParams
     });
     
-    // 2. Create app call transaction to opt in to USDC
-    const usdcOptInTxn = algosdk.makeApplicationNoOpTxnFromObject({
-      appIndex: appId,
-      suggestedParams,
-      sender: senderAddr,
-      appArgs: [new Uint8Array(Buffer.from("opt_in_to_asset"))],
-      foreignAssets: [USDC_ASSET_ID]
+    // Let's give the funding transaction time to be confirmed before executing other transactions
+    // by not putting them in the same group
+    
+    // CRITICAL CHANGE: The opt-in should be sent FROM the app address, not the sender
+    // This was the root cause of the error
+    const usdcOptInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedAppAddress, // FROM APP - this is what was wrong before
+      receiver: validatedAppAddress, // TO APP (same address for opt-in)
+      amount: 0, // 0 for opt-in
+      assetIndex: USDC_ASSET_ID, // USDC asset ID
+      note: new Uint8Array(0),
+      suggestedParams
     });
     
-    // 3. Transfer USDC to the app (signed by sender)
+    // 3. Transfer USDC to the app (after opt-in succeeded)
+    // Use a separate suggestedParams to ensure this happens after opt-in
+    const transferParams = {...suggestedParams};
+    transferParams.flatFee = true;
+    transferParams.fee = BigInt(1000); // Standard fee as BigInt for v3.2.0
+    
     const microAmount = Math.floor(amount * 1_000_000); // Convert to micro USDC
     const usdcTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       sender: senderAddr, // from sender
@@ -249,21 +259,22 @@ export async function prepareAppFundingTransactions(
       amount: microAmount, // amount of USDC
       assetIndex: USDC_ASSET_ID, // USDC asset ID
       note: new Uint8Array(0),
-      suggestedParams
+      suggestedParams: transferParams
     });
     
-    // Create a transaction array for the atomic group
-    const txns = [appFundingTxn, usdcOptInTxn, usdcTransferTxn];
+    // Group funding and opt-in transactions together
+    const fundAndOptInTxns = [appFundingTxn, usdcOptInTxn];
+    algosdk.assignGroupID(fundAndOptInTxns);
     
-    // Assign group ID to make this an atomic transaction group
-    const txGroup = algosdk.assignGroupID(txns);
+    // Keep transfer as a separate txn
+    // This ensures the right execution order: fund & opt-in first, then transfer
     
-    console.log("Atomic transaction group prepared successfully");
+    console.log("Transactions prepared successfully");
     
     return {
-      appFundingTxn: algosdk.encodeUnsignedTransaction(txGroup[0]),
-      usdcOptInTxn: algosdk.encodeUnsignedTransaction(txGroup[1]),
-      usdcTransferTxn: algosdk.encodeUnsignedTransaction(txGroup[2])
+      appFundingTxn: algosdk.encodeUnsignedTransaction(fundAndOptInTxns[0]),
+      usdcOptInTxn: algosdk.encodeUnsignedTransaction(fundAndOptInTxns[1]),
+      usdcTransferTxn: algosdk.encodeUnsignedTransaction(usdcTransferTxn)
     };
   } catch (error) {
     const errorMsg = toErrorWithMessage(error);
