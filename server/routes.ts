@@ -244,17 +244,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           roundedAmount
         );
         
-        // Create and sign an app call transaction to opt-in to USDC
-        const lsig = await prepareAppCallForOptIn(claimApp.appId);
+        // No need to sign the opt-in transaction as it's an app call
+        // The sender will sign all transactions in the atomic group
         
-        // Sign the opt-in transaction (which is part of the atomic group)
-        const signedOptInTxn = algosdk.signLogicSigTransaction(
-          algosdk.decodeUnsignedTransaction(appFundingTxns.usdcOptInTxn),
-          lsig
-        );
-        
-        // Add transactions that need signing by the sender
+        // Add all transactions that need signing by the sender
         unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO
+        unsignedTxns.push(appFundingTxns.usdcOptInTxn);   // App call to opt in to USDC
         unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app
         
         // Convert transactions to base64 for sending to the frontend
@@ -265,10 +260,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`Encoded unsigned transaction ${i+1}`);
           });
           
-          // Include all transactions (including opt-in with its pre-signed version)
+          // Include all transactions in the atomic group
           const allTransactions = [
             appFundingTxns.appFundingTxn,
-            signedOptInTxn.blob, // Use the signed opt-in transaction
+            appFundingTxns.usdcOptInTxn,
             appFundingTxns.usdcTransferTxn
           ];
           

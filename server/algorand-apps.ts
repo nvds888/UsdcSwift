@@ -192,21 +192,20 @@ export async function prepareAppFundingTransactions(
     
     // 1. Fund the app with minimum balance (0.1 ALGO)
     const appFundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      from: senderAddr,
-      to: validatedAppAddress,
+      sender: senderAddr,
+      receiver: validatedAppAddress,
       amount: 100000, // 0.1 ALGO
       note: new Uint8Array(0),
       suggestedParams
     });
     
-    // 2. Call app to opt in to USDC
-    const usdcOptInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedAppAddress, // to app (self)
-      amount: 0, // amount (0 for opt-in)
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
-      suggestedParams
+    // 2. Create app call transaction to opt in to USDC
+    const usdcOptInTxn = algosdk.makeApplicationNoOpTxnFromObject({
+      appIndex: appId,
+      suggestedParams,
+      sender: senderAddr,
+      appArgs: [new Uint8Array(Buffer.from("opt_in_to_asset"))],
+      foreignAssets: [USDC_ASSET_ID]
     });
     
     // 3. Transfer USDC to the app (signed by sender)

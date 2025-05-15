@@ -2,7 +2,7 @@ import algosdk from 'algosdk';
 import { USDC_ASSET_ID } from '../client/src/lib/constants';
 
 // Algorand network connection (default to testnet for now)
-const NETWORK = 'testnet';
+const NETWORK: 'testnet' | 'mainnet' = 'testnet';
 const algodServer = NETWORK === 'mainnet'
   ? 'https://mainnet-api.algonode.cloud'
   : 'https://testnet-api.algonode.cloud';
@@ -57,7 +57,7 @@ export async function prepareAppCallForOptIn(appId: number): Promise<algosdk.Log
     }
     
     // Get program bytes from the app's approval program
-    const programBytes = appInfo.params["approval-program"];
+    const programBytes = appInfo.params.approvalProgram;
     if (!programBytes) {
       throw new Error(`App ${appId} has no approval program`);
     }
