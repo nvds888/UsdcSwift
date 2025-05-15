@@ -3,10 +3,89 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { USDC_ASSET_ID } from '../client/src/lib/constants';
+import * as algokit from '@algorandfoundation/algokit-utils';
 
 // Type definition for errors
 interface ErrorWithMessage {
   message: string;
+}
+
+function createApprovalProgram(senderAddress: string): string {
+  return `#pragma version 8
+// Global state keys
+byte "sender"
+byte "recipient"
+byte "amount"
+
+// Check if creating application
+txn ApplicationID
+int 0
+==
+bnz creation
+
+// Check transaction type
+txn TypeEnum
+int 4 // AssetTransfer
+==
+bnz handle_transfer
+
+txn TypeEnum
+int 6 // ApplicationCall
+==
+bnz handle_app_call
+
+// Reject other types
+int 0
+return
+
+creation:
+// Store sender address
+byte "sender"
+addr ${senderAddress}
+app_global_put
+
+// Initialize recipient as zero address
+byte "recipient"
+global ZeroAddress
+app_global_put
+
+int 1
+return
+
+handle_app_call:
+// Check for opt-in to asset
+txn ApplicationArgs 0
+byte "opt_in_to_asset"
+==
+bnz handle_opt_in
+
+int 0
+return
+
+handle_opt_in:
+// Allow opt-in
+int 1
+return
+
+handle_transfer:
+// Allow transfers from app (opt-in) or from sender (funding)
+txn Sender
+global CurrentApplicationAddress
+==
+bnz allow
+
+txn Sender
+addr ${senderAddress}
+==
+bnz allow
+
+int 0
+return
+
+allow:
+int 1
+return
+`;
 }
 
 function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
@@ -52,9 +131,8 @@ function ensureAddressString(address: string | algosdk.Address): string {
  */
 export async function compileProgram(programSource: string): Promise<Uint8Array> {
   try {
-    const encoder = new TextEncoder();
-    const programBytes = encoder.encode(programSource);
-    const compileResponse = await algodClient.compile(programBytes).do();
+    // algosdk.compile expects a string, not bytes
+    const compileResponse = await algodClient.compile(programSource).do();
     return new Uint8Array(Buffer.from(compileResponse.result, 'base64'));
   } catch (error) {
     const errorMsg = toErrorWithMessage(error);
@@ -82,136 +160,108 @@ export async function createClaimApp(
   try {
     console.log(`Creating claim app for sender: ${sender}`);
     
-    // Validate sender address
-    const senderAddr = ensureAddressString(sender);
-    
-    // Initialize recipient address
-    const initialRecipient = recipientAddress ? ensureAddressString(recipientAddress) : senderAddr;
-    
     // Generate a unique claim token
     const claimToken = uuidv4();
     
-    // Get suggested parameters
-    const suggestedParams = await algodClient.getTransactionParams().do();
-    
-    // Simple approval program that allows only the sender to reclaim funds
-    // and only the designated recipient to claim funds
-    const approvalProgramTemplate = `#pragma version 6
-// Handle different transaction types
+    // Create TEAL programs
+    const approvalProgram = `#pragma version 8
+// Handle application calls
+txn ApplicationID
+int 0
+==
+bnz creation
+
+// Handle opt-in call
+txn OnCompletion
+int 1 // OptIn
+==
+bnz handle_optin
+
+// Handle normal calls
+txn ApplicationArgs 0
+byte "opt_in_to_asset"
+==
+bnz allow_opt_in
+
+// Check if this is an asset transfer
 txn TypeEnum
 int 4 // AssetTransfer
 ==
-bnz handle_asset_transfer
+bnz check_transfer
 
-txn TypeEnum
-int 6 // ApplicationCall
-==
-bnz handle_app_call
-
-// Reject other transaction types
-b reject
-
-// Handle application calls (including opt-in)
-handle_app_call:
-// Check if this is the opt-in call
-txna ApplicationArgs 0
-byte "opt_in_to_asset"
-==
-bnz approve_opt_in
-
-// Reject other app calls
-b reject
-
-approve_opt_in:
-// The app call is for opt-in, so approve it
-int 1
-return
-
-// Handle asset transfers (for claims and reclaims)
-handle_asset_transfer:
-// Check if this is for USDC asset
-txn XferAsset
-int ${USDC_ASSET_ID} // USDC Asset ID
-==
-bz reject
-
-// Check if sender is either original sender (reclaim)
-txn Sender
-addr ${senderAddr} // Original sender
-==
-bnz approve // If sender is original sender, approve (reclaim)
-
-// Otherwise, check if sender is the recipient (claim)
-txn Sender
-addr ${initialRecipient} // Recipient
-==
-bz reject // If not recipient, reject
-
-approve:
-int 1
-return
-
-reject:
+// Reject other calls
 int 0
+return
+
+creation:
+int 1
+return
+
+handle_optin:
+int 1
+return
+
+allow_opt_in:
+int 1
+return
+
+check_transfer:
+// Only allow transfers from the app or to the recipient
+txn Sender
+global CurrentApplicationAddress
+==
+bnz allow_transfer
+
+// Check if sender is the original creator (for reclaim)
+txn Sender
+txn CreatorAddress
+==
+bnz allow_transfer
+
+int 0
+return
+
+allow_transfer:
+int 1
 return
 `;
 
-    // Compile the approval program
-    const compiledApprovalProgram = await compileProgram(approvalProgramTemplate);
+    const clearProgram = `#pragma version 8
+int 1
+return
+`;
+
+    // Compile programs
+    const compiledApproval = await compileProgram(approvalProgram);
+    const compiledClear = await compileProgram(clearProgram);
     
-    // Use a simple clear program that always succeeds
-    const clearProgramSource = "#pragma version 6\nint 1\nreturn";
-    const compiledClearProgram = await compileProgram(clearProgramSource);
+    // Get suggested params
+    const suggestedParams = await algodClient.getTransactionParams().do();
     
-    // Create application creation transaction
-    const onCompletionValue = algosdk.OnApplicationComplete.NoOpOC;
-    const localInts = 0;
-    const localBytes = 0;
-    const globalInts = 1; // For storing amount
-    const globalBytes = 2; // For storing sender and recipient
+    // Create the application using proper algosdk methods
+    const createTxn = algosdk.makeApplicationCreateTxnFromObject({
+      from: sender, // Note: it's 'from' not 'sender' in older algosdk versions
+      approvalProgram: compiledApproval,
+      clearProgram: compiledClear,
+      numLocalInts: 0,
+      numLocalByteSlices: 0,
+      numGlobalInts: 1,
+      numGlobalByteSlices: 2,
+      onComplete: algosdk.OnApplicationComplete.NoOpOC,
+      suggestedParams
+    });
     
-    // Instead of creating the app directly, we'll estimate what the app ID will be
-    // This approach calculates the next app ID a user would create
-    // In a production app, you would create the app first, then proceed with funding
+    // This transaction needs to be signed by the user's wallet
+    // Return the unsigned transaction for the frontend to sign
+    const encodedTxn = algosdk.encodeUnsignedTransaction(createTxn);
     
-    // Get account info to calculate the next app ID
-    const accountInfo = await algodClient.accountInformation(senderAddr).do();
-    // Handle different property naming in different versions of algosdk
-    const createdApps = accountInfo.createdApps || [];
-    
-    // Calculate the next app ID this account would create
-    // If they have created apps before, increment from the last one
-    // Otherwise use a base ID plus timestamp to make it unique
-    let appId = 0;
-    if (createdApps.length > 0) {
-      // Find the highest app ID and add 1
-      const highestAppId = Math.max(...createdApps.map(app => 
-        typeof app.id === 'number' ? app.id : parseInt(app.id)
-      ));
-      appId = highestAppId + 1;
-    } else {
-      // Use a predictable pattern for the first app
-      // Use timestamp to make it unique if no creation round information is available
-      const timestamp = Math.floor(Date.now() / 1000);
-      appId = 10000000 + timestamp % 1000000;
-    }
-    
-    console.log(`Estimated future app ID: ${appId}`);
-    
-    // Get the app address from the calculated ID
-    // Calculate the app address from the app ID
-    const appAddress = algosdk.getApplicationAddress(appId);
-    
-    if (!appId) {
-      throw new Error('Failed to get application ID from transaction result');
-    }
-    
-    console.log(`Created app with ID: ${appId} and address: ${appAddress}`);
-    
+    // Return the transaction data
+    // The actual app ID will be determined after the transaction is submitted
     return {
-      appId,
-      appAddress: ensureAddressString(appAddress),
-      claimToken
+      appId: 0, // Will be updated after submission
+      appAddress: '', // Will be calculated after we get the app ID
+      claimToken,
+      createTxn: encodedTxn
     };
   } catch (error) {
     const errorMsg = toErrorWithMessage(error);

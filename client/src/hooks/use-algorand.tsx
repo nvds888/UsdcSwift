@@ -314,321 +314,129 @@ export function useAlgorand() {
       if (!activeAccount) {
         toast({
           title: "Wallet Error",
-          description: "No wallet connected. Please connect your wallet first.",
+          description: "No wallet connected",
           variant: "destructive",
         });
-        setIsLoading(false);
         return null;
       }
       
-      // PHASE 1: Create app and fund it with ALGO
-      console.log("PHASE 1: Creating and funding application");
-      
-      // Call the API to prepare the app creation transaction
-      const res = await apiRequest("POST", "/api/send", {
+      // Phase 1: Create the app
+      const phase1Response = await apiRequest("POST", "/api/send", {
         ...params,
         senderAddress: activeAccount.address
       });
       
-      // Get the response data
-      const data = await res.json();
-      console.log("Server response:", data);
+      const phase1Data = await phase1Response.json();
       
-      if (!data.success) {
+      if (!phase1Data.success) {
+        throw new Error(phase1Data.message || "Failed to create app");
+      }
+      
+      // Sign and submit phase 1 transactions
+      const phase1TxnsToSign = phase1Data.transactions.txnsBase64.map(
+        base64 => Buffer.from(base64, 'base64')
+      );
+      
+      const signedPhase1Txns = await signTransactions(phase1TxnsToSign);
+      
+      if (!signedPhase1Txns) {
         toast({
-          title: "Transaction Error",
-          description: data.message || "Failed to create transaction",
+          title: "Transaction Cancelled",
+          description: "App creation was cancelled",
           variant: "destructive",
         });
-        setIsLoading(false);
         return null;
       }
       
-      // Get the transaction data from the response
-      const { appId, appAddress, transactionId, transactions, claimToken, claimLink } = data;
-      
-      if (!transactions || !transactions.txnsBase64 || !transactions.allTxnsBase64) {
-        toast({
-          title: "Transaction Error",
-          description: "Invalid transaction data received from server",
-          variant: "destructive",
-        });
-        setIsLoading(false);
-        return null;
-      }
-      
-      // Process PHASE 1: App creation and funding
-      console.log("Processing Phase 1 transactions:", transactions);
-      
-      // Decode the transactions from base64
-      const { txnsBase64, allTxnsBase64 } = transactions;
-      const unsignedTxns = txnsBase64.map((base64Txn: string) => Buffer.from(base64Txn, 'base64'));
-      const allTxns = allTxnsBase64.map((base64Txn: string) => Buffer.from(base64Txn, 'base64'));
-      
-      // Find which transactions need to be signed by the user
-      const indexesToSign: number[] = [];
-      for (let i = 0; i < allTxns.length; i++) {
-        try {
-          const txn = algosdk.decodeUnsignedTransaction(allTxns[i]);
-          if (txn.sender.toString() === activeAccount.address) {
-            console.log(`Transaction ${i} needs signing by the user`);
-            indexesToSign.push(i);
-          } else {
-            console.log(`Transaction ${i} doesn't need signing by the user`);
-          }
-        } catch (decodeError) {
-          console.error(`Failed to decode transaction ${i}:`, decodeError);
-        }
-      }
-      
-      // Sign the transactions that need to be signed
-      const signedTxns = await signTransactions(allTxns, indexesToSign);
-      
-      if (!signedTxns) {
-        toast({
-          title: "Signing Cancelled",
-          description: "Transaction signing was cancelled or failed",
-          variant: "destructive",
-        });
-        setIsLoading(false);
-        return null;
-      }
-      
-      // Prepare the final transaction group
-      const finalTxns: Uint8Array[] = [];
-      for (let i = 0; i < allTxns.length; i++) {
-        if (indexesToSign.includes(i) && signedTxns[indexesToSign.indexOf(i)]) {
-          // This index needed signing and we have a signed version
-          finalTxns.push(signedTxns[indexesToSign.indexOf(i)] as Uint8Array);
-        } else {
-          // This index was pre-signed or doesn't need signing
-          finalTxns.push(allTxns[i]);
-        }
-      }
-      
-      // Convert to base64 for submission
-      const base64SignedTxns = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
-      
-      // Submit the Phase 1 transactions
-      const phase1Response = await apiRequest("POST", "/api/submit-atomic-group", {
-        signedTxns: base64SignedTxns,
-        transactionId: transactionId
+      // Submit phase 1 transactions
+      const phase1SubmitResponse = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: Buffer.from(signedPhase1Txns[0]).toString('base64'),
+        transactionId: phase1Data.transactionId
       });
       
-      if (!phase1Response.ok) {
-        const errorData = await phase1Response.json();
+      const submitResult = await phase1SubmitResponse.json();
+      
+      if (!submitResult.success) {
+        throw new Error("Failed to create app");
+      }
+      
+      // Extract app ID from the transaction result
+      // Wait for confirmation and get app ID
+      await algosdk.waitForConfirmation(algodClient, submitResult.transactionId, 5);
+      
+      // Get transaction info to extract app ID
+      const txInfo = await algodClient.pendingTransactionInformation(submitResult.transactionId).do();
+      const appId = txInfo['application-index'];
+      
+      // Phase 2: Fund and transfer
+      const phase2Response = await apiRequest("POST", "/api/complete-app-setup", {
+        transactionId: phase1Data.transactionId,
+        appId
+      });
+      
+      const phase2Data = await phase2Response.json();
+      
+      if (!phase2Data.success) {
+        throw new Error(phase2Data.message || "Failed to complete app setup");
+      }
+      
+      // Sign only the transactions that need signing
+      const phase2TxnsToSign = phase2Data.transactions.indexesToSign.map(
+        index => Buffer.from(phase2Data.transactions.txnsBase64[index], 'base64')
+      );
+      
+      const signedPhase2Txns = await signTransactions(phase2TxnsToSign);
+      
+      if (!signedPhase2Txns) {
         toast({
-          title: "Transaction Failed",
-          description: errorData.message || "Failed to submit app creation transaction",
+          title: "Transaction Cancelled",
+          description: "Fund and transfer was cancelled",
           variant: "destructive",
         });
-        setIsLoading(false);
         return null;
       }
       
-      console.log("Phase 1 completed successfully. App created and funded.");
+      // Submit phase 2 transactions as a group
+      const finalTxns = phase2Data.transactions.txnsBase64.map((txn, index) => {
+        const signedIndex = phase2Data.transactions.indexesToSign.indexOf(index);
+        if (signedIndex >= 0) {
+          return Buffer.from(signedPhase2Txns[signedIndex]).toString('base64');
+        }
+        return txn; // Already signed or doesn't need signing
+      });
       
-      // Wait a short time for the blockchain to process the transactions
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const phase2SubmitResponse = await apiRequest("POST", "/api/submit-atomic-group", {
+        signedTxns: finalTxns,
+        transactionId: phase1Data.transactionId,
+        approach: "app"
+      });
       
-      // PHASE 2: Opt-in to USDC and transfer funds
-      console.log("Starting PHASE 2: USDC opt-in and transfer");
+      const phase2SubmitResult = await phase2SubmitResponse.json();
       
-      try {
-        const phase2Response = await apiRequest("POST", "/api/complete-funding", {
-          appId,
-          appAddress,
-          transactionId,
-          senderAddress: activeAccount.address
-        });
-        
-        if (!phase2Response.ok) {
-          console.error("Phase 2 preparation failed");
-          // Return Phase 1 data as we've at least created the app
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId,
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        const phase2Data = await phase2Response.json();
-        console.log("Phase 2 preparation response:", phase2Data);
-        
-        if (!phase2Data.success) {
-          toast({
-            title: "Phase 2 Error",
-            description: phase2Data.message || "Failed to prepare USDC transactions",
-            variant: "destructive",
-          });
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId,
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        // Extract the Phase 2 transactions
-        const { optInCallTxn, optInTxn, transferTxn } = phase2Data;
-        
-        // Decode the transactions
-        const optInCallTxnBinary = Buffer.from(optInCallTxn, 'base64');
-        const optInTxnBinary = Buffer.from(optInTxn, 'base64'); 
-        const transferTxnBinary = Buffer.from(transferTxn, 'base64');
-        
-        // Group the opt-in transactions (user's app call and app's internal opt-in)
-        const optInGroup = [optInCallTxnBinary, optInTxnBinary];
-        
-        // Sign the opt-in group - only the user's app call needs signing
-        const optInSigned = await signTransactions(optInGroup, [0]); // only sign index 0
-        
-        if (!optInSigned) {
-          toast({
-            title: "Opt-in Cancelled",
-            description: "USDC opt-in was cancelled or failed",
-            variant: "destructive",
-          });
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId,
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        // Prepare the final opt-in transactions
-        const finalOptInTxns: Uint8Array[] = [];
-        finalOptInTxns.push(optInSigned[0] as Uint8Array); // User's signed app call
-        finalOptInTxns.push(optInTxnBinary); // App's opt-in txn (doesn't need user signing)
-        
-        // Submit the opt-in transactions
-        const optInBase64 = finalOptInTxns.map(txn => Buffer.from(txn).toString('base64'));
-        const optInResponse = await apiRequest("POST", "/api/submit-atomic-group", {
-          signedTxns: optInBase64,
-          transactionId: transactionId,
-          phase: "opt-in"
-        });
-        
-        if (!optInResponse.ok) {
-          console.error("Opt-in failed");
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId,
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        console.log("Opt-in successful. Now transferring USDC...");
-        
-        // Wait for opt-in to be confirmed
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Sign and submit the USDC transfer transaction
-        const transferSigned = await signTransactions([transferTxnBinary], [0]);
-        
-        if (!transferSigned) {
-          toast({
-            title: "Transfer Cancelled",
-            description: "USDC transfer was cancelled or failed",
-            variant: "destructive",
-          });
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId, 
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        // Submit the transfer transaction
-        const transferBase64 = Buffer.from(transferSigned[0] as Uint8Array).toString('base64');
-        const transferResponse = await apiRequest("POST", "/api/submit-transaction", {
-          signedTxn: transferBase64,
-          transactionId: transactionId
-        });
-        
-        if (!transferResponse.ok) {
-          console.error("Transfer failed");
-          const result: TransactionResponse = {
-            success: true,
-            appAddress: appAddress,
-            appId: appId,
-            transactionId: transactionId?.toString() || "",
-            claimToken: claimToken,
-            claimLink: claimLink
-          };
-          setIsLoading(false);
-          return result;
-        }
-        
-        console.log("Complete transaction flow successful!");
-        
-        // Refetch balance
-        fetchBalance();
-        
-        // Return the full data including the claim URL
-        const result: TransactionResponse = {
-          success: true,
-          transactionId: transactionId?.toString() || "",
-          appAddress: appAddress,
-          appId: appId,
-          claimToken: claimToken,
-          claimLink: claimLink
-        };
-        
-        setIsLoading(false);
-        return result;
-        
-      } catch (phase2Error) {
-        console.error("Error in Phase 2:", phase2Error);
-        toast({
-          title: "Phase 2 Error",
-          description: phase2Error instanceof Error ? phase2Error.message : "Unknown error in USDC transactions",
-          variant: "destructive",
-        });
-        const result: TransactionResponse = {
-          success: true,
-          appAddress: appAddress,
-          appId: appId,
-          transactionId: transactionId?.toString() || "",
-          claimToken: claimToken,
-          claimLink: claimLink
-        };
-        setIsLoading(false);
-        return result;
+      if (!phase2SubmitResult.success) {
+        throw new Error("Failed to fund and transfer");
       }
+      
+      // Success!
+      return {
+        success: true,
+        transactionId: phase1Data.transactionId,
+        appAddress: phase2Data.appAddress,
+        appId,
+        claimToken: phase1Data.claimToken,
+        claimLink: phase1Data.claimLink
+      };
+      
     } catch (error) {
       console.error("Error sending USDC:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Unknown error sending USDC",
+        description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       });
-      setIsLoading(false);
       return null;
+    } finally {
+      setIsLoading(false);
     }
   };
 
