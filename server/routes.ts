@@ -31,9 +31,11 @@ import {
   submitTransaction,
   getUsdcBalance
 } from "./algorand-apps";
+import { prepareAppCallForOptIn } from "./app-lsig";
 import { USDC_ASSET_ID } from "../client/src/lib/constants";
 import { sendClaimEmail } from "./email";
 import { storage } from "./storage";
+import algosdk from "algosdk";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Handle errors globally
