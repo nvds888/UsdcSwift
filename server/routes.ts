@@ -489,19 +489,20 @@ return
           roundedAmount
         );
         
-        // Create a transaction group with app creation and funding
-        const groupTxns = [
-          appCreateTxn,  // App creation transaction
-          algosdk.decodeUnsignedTransaction(appFundingTxns.appFundingTxn)  // Funding transaction  
+        // Create separate app creation and funding transactions
+        // We'll handle them as separate transactions - not as a group
+        // This is critical because the Algorand SDK validation can sometimes
+        // reject atomic groups with app creation transactions
+        
+        // Prepare transactions individually
+        const appCreateTxnEncoded = algosdk.encodeUnsignedTransaction(appCreateTxn);
+        const appFundingTxnEncoded = appFundingTxns.appFundingTxn;
+        
+        // Use individual transactions - not grouped
+        const unsignedTxns = [
+          appCreateTxnEncoded,
+          appFundingTxnEncoded
         ];
-        
-        // Assign the group ID to make them execute as an atomic unit
-        algosdk.assignGroupID(groupTxns);
-        
-        // Encode the grouped transactions for sending to the client
-        const unsignedTxns = groupTxns.map(txn => 
-          algosdk.encodeUnsignedTransaction(txn)
-        );
         
         // For the opt-in and transfer, we'll handle those in a separate transaction group
         // after the app is created and funded
@@ -519,11 +520,8 @@ return
           });
           
           // For the first phase, we only need to create the app and fund it
-          // Phase 1: Create and fund the app - using the grouped transactions from above
-          const allTransactions = [
-            algosdk.encodeUnsignedTransaction(groupTxns[0]),  // Create the app (with group ID)
-            algosdk.encodeUnsignedTransaction(groupTxns[1])   // Fund the app with ALGOs (with group ID)
-          ];
+          // Phase 1: Create and fund the app as individual transactions
+          const allTransactions = unsignedTxns;
           
           // Phase 2 will be done after app is created:
           // - Opt-in to USDC
