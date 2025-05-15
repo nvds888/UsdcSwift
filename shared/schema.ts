@@ -85,6 +85,7 @@ export const signedTransactionSchema = z.object({
   // Optional fields for sequential transaction processing
   isSequential: z.boolean().optional(),
   sequentialIndex: z.number().int().min(0).optional(),
+  approach: z.string().optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

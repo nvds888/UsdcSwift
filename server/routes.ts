@@ -134,14 +134,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: result.error.message });
       }
       
-      const { signedTransaction, isSequential, sequentialIndex, transactionId, approach } = result.data;
+      const { signedTxn, isSequential, sequentialIndex, transactionId, approach } = result.data;
       
-      if (!signedTransaction) {
+      if (!signedTxn) {
         return res.status(400).json({ message: "Signed transaction is required" });
       }
       
       let txStatus = 'pending';
-      const signedTxn = Buffer.from(signedTransaction, 'base64');
+      console.log(`Processing signed transaction in base64: ${signedTxn.slice(0, 20)}...`);
+      const signedTxnBuffer = Buffer.from(signedTxn, 'base64');
       
       // Use the appropriate submit function based on the approach
       let txId;
