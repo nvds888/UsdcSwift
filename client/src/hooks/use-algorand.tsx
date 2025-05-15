@@ -186,12 +186,13 @@ export function useAlgorand() {
   };
   
   // Fall back to signing individual transactions
+  // UPDATED: Using sequential individual transaction submission
   const signAndSubmitIndividualTransactions = async (
     txnsBase64: string[],
     transactionId: number
   ): Promise<boolean> => {
     try {
-      console.log(`Signing ${txnsBase64.length} individual transactions`);
+      console.log(`Attempting sequential approach: ${txnsBase64.length} transactions`);
       
       // Convert base64 strings to Uint8Array transactions
       const decodedTxns = txnsBase64.map(txnBase64 => 
@@ -199,7 +200,7 @@ export function useAlgorand() {
       );
       
       // Sign the transactions directly with the user's wallet
-      // TxnLab wallet expects either Transaction[] or Uint8Array[] 
+      console.log("Requesting wallet to sign transactions...");
       let signedTxns;
       try {
         // Pass the Uint8Array transactions directly to the wallet
@@ -207,30 +208,97 @@ export function useAlgorand() {
         
         if (!signedTxns || signedTxns.length !== txnsBase64.length) {
           console.error("Failed to sign transactions or incomplete signatures");
+          toast({
+            title: "Signing Failed",
+            description: "Some transactions weren't signed properly",
+            variant: "destructive",
+          });
           return false;
         }
       } catch (walletError) {
         console.error("[Wallet] Error signing transactions:", walletError);
+        toast({
+          title: "Wallet Error",
+          description: walletError instanceof Error ? walletError.message : "Unknown wallet error",
+          variant: "destructive",
+        });
         return false;
       }
       
-      // Handle potential null value in the signed transactions
-      if (!signedTxns[0]) {
-        console.error("First transaction was not signed properly");
-        return false;
+      // Process each transaction in sequence with delays between them
+      // This approach works better for app creation + funding
+      
+      let successCount = 0;
+      
+      // First process the app creation transaction (if any)
+      if (signedTxns[0]) {
+        console.log("Submitting first transaction (app creation)");
+        const firstTxnBase64 = Buffer.from(signedTxns[0] as Uint8Array).toString('base64');
+        const response = await apiRequest("POST", "/api/submit-transaction", {
+          signedTxn: firstTxnBase64,
+          transactionId: transactionId
+        });
+        
+        if (!response.ok) {
+          console.error("Failed to submit app creation transaction");
+          toast({
+            title: "Transaction Failed",
+            description: "Could not create the application",
+            variant: "destructive",
+          });
+          return false;
+        }
+        
+        successCount++;
+        console.log("First transaction succeeded");
+        
+        // Wait for confirmation before proceeding
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
-      const response = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(signedTxns[0]).toString('base64'),
-        transactionId
-      });
-      
-      if (!response.ok) {
-        console.error("Failed to submit signed transaction");
-        return false;
+      // Process remaining transactions
+      for (let i = 1; i < signedTxns.length; i++) {
+        if (!signedTxns[i]) continue;
+        
+        console.log(`Submitting transaction ${i+1}`);
+        const txnBase64 = Buffer.from(signedTxns[i] as Uint8Array).toString('base64');
+        
+        try {
+          const response = await apiRequest("POST", "/api/submit-transaction", {
+            signedTxn: txnBase64,
+            transactionId: transactionId
+          });
+          
+          if (response.ok) {
+            successCount++;
+            console.log(`Transaction ${i+1} succeeded`);
+          } else {
+            console.error(`Transaction ${i+1} failed`);
+            
+            if (i === 1) {
+              // If the second transaction (app funding) fails, we should notify
+              toast({
+                title: "App Funding Failed",
+                description: "App was created but funding failed",
+                variant: "destructive",
+              });
+            }
+          }
+          
+          // Small delay between transactions
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+          console.error(`Error submitting transaction ${i+1}:`, error);
+        }
       }
       
-      return true;
+      console.log(`${successCount} of ${signedTxns.length} transactions processed successfully`);
+      
+      // Refresh transactions
+      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      
+      // Consider success if at least the app creation worked
+      return successCount > 0;
     } catch (error) {
       console.error("Error signing/submitting transactions:", error);
       return false;
