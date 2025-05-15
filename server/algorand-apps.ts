@@ -137,12 +137,42 @@ return
     const clearProgramSource = "#pragma version 6\nint 1\nreturn";
     const compiledClearProgram = await compileProgram(clearProgramSource);
     
-    // Calculate app ID (in real app we'd get this from transaction result)
-    const accountInfo = await algodClient.accountInformation(senderAddr).do();
-    const createdApps = accountInfo.createdApps || [];
-    const appId = createdApps.length > 0 
-      ? Number(createdApps[createdApps.length - 1].id) + 1 
-      : 10000000 + Math.floor(Date.now() / 1000) % 1000000;
+    // Create application creation transaction
+    const onCompletionValue = algosdk.OnApplicationComplete.NoOpOC;
+    const localInts = 0;
+    const localBytes = 0;
+    const globalInts = 1; // For storing amount
+    const globalBytes = 2; // For storing sender and recipient
+    
+    // Create the application
+    const appCreateTxn = algosdk.makeApplicationCreateTxnFromObject({
+      from: senderAddr,
+      approvalProgram: compiledApprovalProgram,
+      clearProgram: compiledClearProgram,
+      numLocalInts: localInts,
+      numLocalByteSlices: localBytes,
+      numGlobalInts: globalInts,
+      numGlobalByteSlices: globalBytes,
+      suggestedParams,
+      onComplete: onCompletionValue
+    });
+
+    // Sign the transaction
+    const signedTxn = algosdk.signTransaction(appCreateTxn, algosdk.decodeAddress(senderAddr).publicKey);
+    
+    // Submit the transaction
+    const { txId } = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    
+    // Wait for confirmation
+    await algosdk.waitForConfirmation(algodClient, txId, 4);
+    
+    // Get app info from transaction result
+    const confirmedTxn = await algodClient.pendingTransactionInformation(txId).do();
+    const appId = confirmedTxn['application-index'];
+    
+    if (!appId) {
+      throw new Error('Failed to get application ID from transaction result');
+    }
     
     // Get app address
     const appAddress = algosdk.getApplicationAddress(appId);
