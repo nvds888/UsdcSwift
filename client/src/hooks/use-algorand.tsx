@@ -115,9 +115,10 @@ export function useAlgorand() {
       const finalTxns: Uint8Array[] = [];
       
       for (let i = 0; i < signedTxns.length; i++) {
-        if (signedTxns[i]) {
+        const signedTx = signedTxns[i];
+        if (signedTx) {
           // This was signed by the wallet
-          finalTxns.push(signedTxns[i]);
+          finalTxns.push(signedTx);
         } else {
           // This was pre-signed or not meant to be signed - use original
           finalTxns.push(allTxnBinaries[i]);

@@ -176,6 +176,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Handle atomic transaction groups
+  app.post("/api/submit-atomic-group", async (req: Request, res: Response) => {
+    try {
+      const result = atomicTransactionGroupSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.message });
+      }
+      
+      const { signedTxns, transactionId, approach } = result.data;
+      
+      if (!signedTxns || signedTxns.length === 0) {
+        return res.status(400).json({ message: "Signed transactions are required" });
+      }
+      
+      console.log(`Processing atomic group with ${signedTxns.length} transactions`);
+      
+      // Process and submit each transaction in the group
+      let firstTxId: string = '';
+      let success = true;
+      let txStatus = 'pending';
+      
+      for (let i = 0; i < signedTxns.length; i++) {
+        try {
+          // Decode the base64 transaction
+          const signedTxnBuffer = Buffer.from(signedTxns[i], 'base64');
+          
+          // Submit based on the transaction approach
+          let txId: string;
+          if (approach === 'app') {
+            // Use the app-based approach
+            txId = await submitTransaction(signedTxnBuffer);
+          } else {
+            // Use the escrow-based approach (default)
+            txId = await submitSignedTransaction(signedTxnBuffer);
+          }
+          
+          console.log(`Transaction ${i+1}/${signedTxns.length} submitted with ID: ${txId}`);
+          
+          // Store the first transaction ID as reference
+          if (i === 0) {
+            firstTxId = txId;
+          }
+          
+          // If this is the final transaction in the group (e.g., the USDC transfer), 
+          // mark the transaction as funded
+          if (i === signedTxns.length - 1) {
+            txStatus = 'funded';
+          }
+        } catch (error) {
+          console.error(`Error submitting transaction ${i+1}:`, error);
+          success = false;
+          // Continue processing other transactions
+        }
+      }
+      
+      // If we have a transaction ID from the database, update it
+      if (transactionId && firstTxId && success) {
+        const transaction = await storage.getTransactionById(transactionId);
+        
+        if (transaction) {
+          // Mark the transaction as funded
+          transaction.transactionId = firstTxId;
+          console.log(`Updated transaction ${transactionId} with Algorand transaction ID ${firstTxId}`);
+        }
+      }
+      
+      return res.json({ 
+        success, 
+        transactionId: firstTxId,
+        status: txStatus,
+        message: success ? "All transactions submitted successfully" : "Some transactions failed to submit"
+      });
+    } catch (error) {
+      console.error('Error submitting atomic transaction group:', error);
+      return res.status(500).json({ 
+        success: false, 
+        message: error instanceof Error ? error.message : "Unknown error submitting transaction group" 
+      });
+    }
+  });
+
   // Create a new transaction (send USDC)
   app.post("/api/send", async (req: Request, res: Response) => {
     try {
