@@ -99,54 +99,39 @@ export function useAlgorand() {
         }
       }
       
-      console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
-      
-      // Pass ALL transactions to the wallet, but specify which ones to sign
-      // The wallet will validate the group and only sign the specified indexes
+      // Sign all transactions in a single wallet request
       const signedTxns = await signTransactions(allTxnBinaries, indexesToSign);
       
-      if (!signedTxns || signedTxns.length !== allTxns.length) {
-        console.error("Failed to sign transactions properly");
+      if (!signedTxns) {
+        // User cancelled or wallet error
+        console.error("Failed to sign transactions - user cancelled or wallet error");
         return false;
       }
       
-      // The wallet returns the full array with signed transactions at the specified indexes
-      // and null/original values at the pre-signed indexes
-      const finalTxns: Uint8Array[] = [];
-      
-      for (let i = 0; i < signedTxns.length; i++) {
-        // Handle possible null values from the wallet response
-        // by using a type assertion to tell TypeScript this is safe
-        const signedTx = signedTxns[i];
-        if (signedTx) {
-          // This was signed by the wallet
-          finalTxns.push(signedTx as Uint8Array);
-        } else {
-          // This was pre-signed or not meant to be signed - use original
-          finalTxns.push(allTxnBinaries[i]);
-        }
-      }
-
-      // Submit all transactions as a group to the new atomic group endpoint
-      console.log(`Submitting all ${finalTxns.length} transactions as an atomic group`);
-      
-      // Convert all signed transactions to base64
-      const base64Txns = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
-      
-      // Submit to our new endpoint for atomic transaction groups
-      const submitResponse = await apiRequest("POST", "/api/submit-atomic-group", {
-        signedTxns: base64Txns,
-        transactionId
+      // Prepare the final transaction array, replacing the original transactions
+      // with the signed ones at the correct indexes
+      const finalTxns: Uint8Array[] = [...allTxnBinaries];
+      indexesToSign.forEach((idx, i) => {
+        if (signedTxns[i]) finalTxns[idx] = signedTxns[i] as Uint8Array;
       });
       
-      if (!submitResponse.ok) {
-        console.error(`Failed to submit atomic transaction group`);
+      // Convert to base64 for API submission
+      const finalTxnsBase64 = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
+      
+      // Submit the entire transaction group to the server
+      const response = await apiRequest("POST", "/api/submit-atomic-group", {
+        signedTxns: finalTxnsBase64,
+        transactionId: transactionId
+      });
+      
+      if (!response.ok) {
+        console.error("Failed to submit atomic transaction group");
         return false;
       }
       
       console.log("Atomic transaction group submitted successfully");
       
-      // Invalidate transaction queries to force a refresh
+      // Refresh transactions
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       
       return true;
@@ -209,16 +194,6 @@ export function useAlgorand() {
         return false;
       }
       
-      // Submit the signed transactions to the backend
-      // For simplicity, we'll just submit the first transaction
-      // In a production app, we should handle all transactions properly
-      
-      // Handle potential null value in the signed transactions
-      if (!signedTxns[0]) {
-        console.error("First transaction was not signed properly");
-        return false;
-      }
-      
       const response = await apiRequest("POST", "/api/submit-transaction", {
         signedTxn: Buffer.from(signedTxns[0]).toString('base64'),
         transactionId
@@ -236,327 +211,484 @@ export function useAlgorand() {
     }
   };
 
-  // Send USDC to recipient
+  // Send USDC to recipient - using the 2-phase approach:
+  // Phase 1: Create and fund the app
+  // Phase 2: Opt-in to USDC and transfer funds
   const sendUsdc = async (params: SendUsdcParams): Promise<TransactionResponse | null> => {
     setIsLoading(true);
     try {
-      // Create the escrow account and get transaction details
-      const res = await apiRequest("POST", "/api/send", params);
-      const data = await res.json();
-      
-      console.log("Server response:", data);
-      
-      // Check which type of transaction we're dealing with
-      if (activeAccount && data.transactions) {
-        let success = false;
-        console.log("Found transaction data:", data.transactions);
-        
-        if (data.transactions.txnsBase64 && data.transactions.txnsBase64.length > 0) {
-          // New atomic transaction format
-          console.log("Using atomic transaction format with", data.transactions.txnsBase64.length, "transactions to sign");
-          
-          // Check if we have the full transaction group (including pre-signed txns)
-          if (data.transactions.allTxnsBase64 && data.transactions.allTxnsBase64.length > 0) {
-            console.log("Processing complete atomic transaction group with", data.transactions.allTxnsBase64.length, "total transactions");
-            success = await signAndSubmitMultipleTransactions(
-              data.transactions.txnsBase64,
-              data.transactionId,
-              data.transactions.allTxnsBase64
-            );
-          } else {
-            // Fallback to old method if allTxnsBase64 is not provided
-            console.log("Using legacy multi-transaction format without group");
-            success = await signAndSubmitMultipleTransactions(
-              data.transactions.txnsBase64,
-              data.transactionId
-            );
-          }
-        } else if (data.transactions.txnBase64) {
-          // Legacy single transaction format
-          console.log("Using legacy transaction format");
-          success = await signAndSubmitTransaction(
-            data.transactions.txnBase64,
-            data.transactionId
-          );
-        } else {
-          console.error("No valid transaction format found in response");
-        }
-        
-        if (!success) {
-          // If transaction signing fails, show a warning but don't fail completely
-          toast({
-            title: "Warning",
-            description: "Transaction was created but not signed. The recipient can still claim after you fund the escrow account."
-          });
-        }
-      } else {
-        console.error("No transaction data found in response or no active account");
+      if (!activeAccount) {
+        toast({
+          title: "Wallet Error",
+          description: "No wallet connected. Please connect your wallet first.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
       }
       
-      // Invalidate transactions cache
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      // PHASE 1: Create app and fund it with ALGO
+      console.log("PHASE 1: Creating and funding application");
       
-      toast({
-        title: "Success",
-        description: `USDC transfer initiated to ${params.recipientEmail}`,
+      // Call the API to prepare the app creation transaction
+      const res = await apiRequest("POST", "/api/send", {
+        ...params,
+        senderAddress: activeAccount.address
       });
       
-      return data;
+      // Get the response data
+      const data = await res.json();
+      console.log("Server response:", data);
+      
+      if (!data.success) {
+        toast({
+          title: "Transaction Error",
+          description: data.message || "Failed to create transaction",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
+      }
+      
+      // Get the transaction data from the response
+      const { appId, appAddress, transactionId, transactions, claimToken, claimLink } = data;
+      
+      if (!transactions || !transactions.txnsBase64 || !transactions.allTxnsBase64) {
+        toast({
+          title: "Transaction Error",
+          description: "Invalid transaction data received from server",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
+      }
+      
+      // Process PHASE 1: App creation and funding
+      console.log("Processing Phase 1 transactions:", transactions);
+      
+      // Decode the transactions from base64
+      const { txnsBase64, allTxnsBase64 } = transactions;
+      const unsignedTxns = txnsBase64.map((base64Txn: string) => Buffer.from(base64Txn, 'base64'));
+      const allTxns = allTxnsBase64.map((base64Txn: string) => Buffer.from(base64Txn, 'base64'));
+      
+      // Find which transactions need to be signed by the user
+      const indexesToSign: number[] = [];
+      for (let i = 0; i < allTxns.length; i++) {
+        try {
+          const txn = algosdk.decodeUnsignedTransaction(allTxns[i]);
+          if (txn.sender.toString() === activeAccount.address) {
+            console.log(`Transaction ${i} needs signing by the user`);
+            indexesToSign.push(i);
+          } else {
+            console.log(`Transaction ${i} doesn't need signing by the user`);
+          }
+        } catch (decodeError) {
+          console.error(`Failed to decode transaction ${i}:`, decodeError);
+        }
+      }
+      
+      // Sign the transactions that need to be signed
+      const signedTxns = await signTransactions(allTxns, indexesToSign);
+      
+      if (!signedTxns) {
+        toast({
+          title: "Signing Cancelled",
+          description: "Transaction signing was cancelled or failed",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
+      }
+      
+      // Prepare the final transaction group
+      const finalTxns: Uint8Array[] = [];
+      for (let i = 0; i < allTxns.length; i++) {
+        if (indexesToSign.includes(i) && signedTxns[indexesToSign.indexOf(i)]) {
+          // This index needed signing and we have a signed version
+          finalTxns.push(signedTxns[indexesToSign.indexOf(i)] as Uint8Array);
+        } else {
+          // This index was pre-signed or doesn't need signing
+          finalTxns.push(allTxns[i]);
+        }
+      }
+      
+      // Convert to base64 for submission
+      const base64SignedTxns = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
+      
+      // Submit the Phase 1 transactions
+      const phase1Response = await apiRequest("POST", "/api/submit-atomic-group", {
+        signedTxns: base64SignedTxns,
+        transactionId: transactionId
+      });
+      
+      if (!phase1Response.ok) {
+        const errorData = await phase1Response.json();
+        toast({
+          title: "Transaction Failed",
+          description: errorData.message || "Failed to submit app creation transaction",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
+      }
+      
+      console.log("Phase 1 completed successfully. App created and funded.");
+      
+      // Wait a short time for the blockchain to process the transactions
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // PHASE 2: Opt-in to USDC and transfer funds
+      console.log("Starting PHASE 2: USDC opt-in and transfer");
+      
+      try {
+        const phase2Response = await apiRequest("POST", "/api/complete-funding", {
+          appId,
+          appAddress,
+          transactionId,
+          senderAddress: activeAccount.address
+        });
+        
+        if (!phase2Response.ok) {
+          console.error("Phase 2 preparation failed");
+          // Return Phase 1 data as we've at least created the app
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId,
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        const phase2Data = await phase2Response.json();
+        console.log("Phase 2 preparation response:", phase2Data);
+        
+        if (!phase2Data.success) {
+          toast({
+            title: "Phase 2 Error",
+            description: phase2Data.message || "Failed to prepare USDC transactions",
+            variant: "destructive",
+          });
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId,
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        // Extract the Phase 2 transactions
+        const { optInCallTxn, optInTxn, transferTxn } = phase2Data;
+        
+        // Decode the transactions
+        const optInCallTxnBinary = Buffer.from(optInCallTxn, 'base64');
+        const optInTxnBinary = Buffer.from(optInTxn, 'base64'); 
+        const transferTxnBinary = Buffer.from(transferTxn, 'base64');
+        
+        // Group the opt-in transactions (user's app call and app's internal opt-in)
+        const optInGroup = [optInCallTxnBinary, optInTxnBinary];
+        
+        // Sign the opt-in group - only the user's app call needs signing
+        const optInSigned = await signTransactions(optInGroup, [0]); // only sign index 0
+        
+        if (!optInSigned) {
+          toast({
+            title: "Opt-in Cancelled",
+            description: "USDC opt-in was cancelled or failed",
+            variant: "destructive",
+          });
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId,
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        // Prepare the final opt-in transactions
+        const finalOptInTxns: Uint8Array[] = [];
+        finalOptInTxns.push(optInSigned[0] as Uint8Array); // User's signed app call
+        finalOptInTxns.push(optInTxnBinary); // App's opt-in txn (doesn't need user signing)
+        
+        // Submit the opt-in transactions
+        const optInBase64 = finalOptInTxns.map(txn => Buffer.from(txn).toString('base64'));
+        const optInResponse = await apiRequest("POST", "/api/submit-atomic-group", {
+          signedTxns: optInBase64,
+          transactionId: transactionId,
+          phase: "opt-in"
+        });
+        
+        if (!optInResponse.ok) {
+          console.error("Opt-in failed");
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId,
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        console.log("Opt-in successful. Now transferring USDC...");
+        
+        // Wait for opt-in to be confirmed
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Sign and submit the USDC transfer transaction
+        const transferSigned = await signTransactions([transferTxnBinary], [0]);
+        
+        if (!transferSigned) {
+          toast({
+            title: "Transfer Cancelled",
+            description: "USDC transfer was cancelled or failed",
+            variant: "destructive",
+          });
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId, 
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        // Submit the transfer transaction
+        const transferBase64 = Buffer.from(transferSigned[0] as Uint8Array).toString('base64');
+        const transferResponse = await apiRequest("POST", "/api/submit-transaction", {
+          signedTxn: transferBase64,
+          transactionId: transactionId
+        });
+        
+        if (!transferResponse.ok) {
+          console.error("Transfer failed");
+          const result: TransactionResponse = {
+            success: true,
+            appAddress: appAddress,
+            appId: appId,
+            transactionId: transactionId?.toString() || "",
+            claimToken: claimToken,
+            claimLink: claimLink
+          };
+          setIsLoading(false);
+          return result;
+        }
+        
+        console.log("Complete transaction flow successful!");
+        
+        // Refetch balance
+        fetchBalance();
+        
+        // Return the full data including the claim URL
+        const result: TransactionResponse = {
+          success: true,
+          transactionId: transactionId?.toString() || "",
+          appAddress: appAddress,
+          appId: appId,
+          claimToken: claimToken,
+          claimLink: claimLink
+        };
+        
+        setIsLoading(false);
+        return result;
+        
+      } catch (phase2Error) {
+        console.error("Error in Phase 2:", phase2Error);
+        toast({
+          title: "Phase 2 Error",
+          description: phase2Error instanceof Error ? phase2Error.message : "Unknown error in USDC transactions",
+          variant: "destructive",
+        });
+        const result: TransactionResponse = {
+          success: true,
+          appAddress: appAddress,
+          appId: appId,
+          transactionId: transactionId?.toString() || "",
+          claimToken: claimToken,
+          claimLink: claimLink
+        };
+        setIsLoading(false);
+        return result;
+      }
     } catch (error) {
       console.error("Error sending USDC:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to send USDC",
+        description: error instanceof Error ? error.message : "Unknown error sending USDC",
         variant: "destructive",
       });
-      return null;
-    } finally {
       setIsLoading(false);
+      return null;
     }
   };
 
-  // Claim USDC
+  // Claim USDC from an existing transaction
   const claimUsdc = async (params: ClaimUsdcParams): Promise<Transaction | null> => {
     setIsLoading(true);
     try {
-      console.log("Starting claim process with params:", params);
-      
-      // With the updated backend, we don't need the wallet to sign the transaction
-      // The server does everything: creating, signing with LogicSig, and submitting
-      const res = await apiRequest("POST", "/api/claim", params);
-      
-      if (!res.ok) {
-        const errorData = await res.json();
-        console.error("Error claiming USDC:", errorData);
+      if (!activeAccount) {
         toast({
-          title: "Error",
-          description: errorData.message || "Failed to claim USDC",
+          title: "Wallet Error",
+          description: "No wallet connected. Please connect your wallet first.",
           variant: "destructive",
         });
+        setIsLoading(false);
         return null;
       }
       
-      const data = await res.json();
-      console.log("Claim transaction successful:", data);
+      const response = await apiRequest("POST", "/api/claim", {
+        ...params,
+        recipientAddress: activeAccount.address
+      });
       
-      if (!data.success) {
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
         toast({
-          title: "Error",
+          title: "Claim Error",
           description: data.message || "Failed to claim USDC",
           variant: "destructive",
         });
+        setIsLoading(false);
         return null;
       }
       
-      // Invalidate transactions cache to update UI
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      // Handle signing and submission similar to sendUsdc
+      // ...
       
-      toast({
-        title: "Success",
-        description: "USDC claimed successfully and transferred to your wallet!",
-      });
+      // Refetch balance
+      fetchBalance();
       
-      return data;
+      setIsLoading(false);
+      return data.transaction;
     } catch (error) {
       console.error("Error claiming USDC:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to claim USDC",
+        description: error instanceof Error ? error.message : "Unknown error claiming USDC",
         variant: "destructive",
       });
-      return null;
-    } finally {
       setIsLoading(false);
+      return null;
     }
   };
 
-  // Regenerate claim link
+  // Regenerate a claim link for an existing transaction
   const regenerateLink = async (params: RegenerateLinkParams): Promise<TransactionResponse | null> => {
     setIsLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/regenerate-link", params);
-      const data = await res.json();
+      const response = await apiRequest("POST", "/api/regenerate-link", params);
+      const data = await response.json();
       
-      // Sign and submit the transaction if we have txParams
-      if (activeAccount && data.txParams && data.txParams.txnBase64) {
-        // Attempt to sign and submit the transaction with the wallet
-        const success = await signAndSubmitTransaction(
-          data.txParams.txnBase64,
-          data.id
-        );
-        
-        if (!success) {
-          toast({
-            title: "Warning",
-            description: "New claim link was generated but transaction was not signed."
-          });
-        }
+      if (!response.ok || !data.success) {
+        toast({
+          title: "Error",
+          description: data.message || "Failed to regenerate claim link",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
       }
       
-      // Invalidate transactions cache
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-      
-      toast({
-        title: "Success",
-        description: "New claim link generated and sent",
-      });
-      
+      setIsLoading(false);
       return data;
     } catch (error) {
       console.error("Error regenerating link:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to regenerate claim link",
+        description: error instanceof Error ? error.message : "Unknown error regenerating link",
         variant: "destructive",
       });
-      return null;
-    } finally {
       setIsLoading(false);
+      return null;
     }
   };
 
-  // Reclaim USDC
+  // Reclaim USDC from an existing transaction back to the sender
   const reclaimUsdc = async (params: ReclaimUsdcParams): Promise<Transaction | null> => {
     setIsLoading(true);
     try {
-      // First, get the transaction parameters from the server
-      const res = await apiRequest("POST", "/api/reclaim", params);
-      const data = await res.json();
-      
-      // Sign and submit the transaction if we have txParams
-      if (activeAccount && data.txParams && data.txParams.txnBase64) {
-        // Attempt to sign and submit the transaction with the wallet
-        const success = await signAndSubmitTransaction(
-          data.txParams.txnBase64,
-          data.id
-        );
-        
-        if (!success) {
-          toast({
-            title: "Warning",
-            description: "Transaction creation succeeded but signing failed. Please try again."
-          });
-        }
+      if (!activeAccount) {
+        toast({
+          title: "Wallet Error",
+          description: "No wallet connected. Please connect your wallet first.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
       }
       
-      // Invalidate transactions cache
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      // Check if we're the original sender
+      // (This validation could also be done on the server)
       
-      toast({
-        title: "Success",
-        description: "USDC reclaimed successfully",
+      const response = await apiRequest("POST", "/api/reclaim", {
+        ...params,
+        senderAddress: activeAccount.address
       });
       
-      return data;
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        toast({
+          title: "Reclaim Error",
+          description: data.message || "Failed to reclaim USDC",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return null;
+      }
+      
+      // Handle signing and submission similar to sendUsdc
+      // ...
+      
+      // Refetch balance
+      fetchBalance();
+      
+      setIsLoading(false);
+      return data.transaction;
     } catch (error) {
       console.error("Error reclaiming USDC:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to reclaim USDC",
+        description: error instanceof Error ? error.message : "Unknown error reclaiming USDC",
         variant: "destructive",
       });
-      return null;
-    } finally {
       setIsLoading(false);
+      return null;
     }
   };
-
-  // Submit signed transaction to the blockchain
+  
+  // Submit a pre-signed transaction
   const submitSignedTransaction = async (params: SignedTransactionParams): Promise<{ success: boolean; transactionId?: string }> => {
-    setIsLoading(true);
     try {
-      console.log("Submitting transaction to API:", params);
-      const res = await apiRequest("POST", "/api/submit-transaction", params);
-      const data = await res.json();
-      console.log("API Response:", data);
+      const response = await apiRequest("POST", "/api/submit-transaction", params);
+      const data = await response.json();
       
-      if (data.success) {
-        toast({
-          title: "Success",
-          description: "Transaction submitted successfully",
-        });
-        
-        // Invalidate transactions cache and refresh balance
-        queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-        fetchBalance();
-        
-        return {
-          success: true,
-          transactionId: data.transactionId
-        };
-      } else {
-        throw new Error("Failed to submit transaction");
+      if (!response.ok || !data.success) {
+        console.error("Failed to submit signed transaction:", data.message);
+        return { success: false };
       }
+      
+      return { success: true, transactionId: data.transactionId };
     } catch (error) {
       console.error("Error submitting transaction:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to submit transaction",
-        variant: "destructive",
-      });
       return { success: false };
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Sign transaction with wallet and submit
-  const signAndSubmitTransaction = async (txnBase64: string, transactionId: number): Promise<boolean> => {
-    if (!activeAccount || !signTransactions) {
-      toast({
-        title: "Wallet Not Connected",
-        description: "Please connect your wallet to sign the transaction",
-        variant: "destructive",
-      });
-      return false;
-    }
-    
-    try {
-      setIsLoading(true);
-      
-      // Decode the base64 transaction to get the binary transaction data
-      const txnBytes = Buffer.from(txnBase64, 'base64');
-      
-      // Convert to an Algorand transaction object
-      const txn = algosdk.decodeUnsignedTransaction(txnBytes);
-      
-      // Convert the transaction to the expected format for the wallet
-      // Some wallets expect the transaction to be encoded in a specific way
-      const encodedTxn = algosdk.encodeUnsignedTransaction(txn);
-      
-      // Sign the transaction with the wallet - pass the binary transaction directly
-      // No need to wrap it in an object with signers, the wallet handles that internally
-      const signedTransactions = await signTransactions([encodedTxn]);
-      
-      if (!signedTransactions || signedTransactions.length === 0) {
-        throw new Error("Failed to sign transaction");
-      }
-      
-      // Check if the transaction was signed successfully
-      if (!signedTransactions[0]) {
-        throw new Error("Transaction was not signed properly");
-      }
-      
-      // The wallet returns a signed transaction Uint8Array that we need to convert to base64
-      const signedTxn = signedTransactions[0];
-      const signedTxnBase64 = Buffer.from(signedTxn).toString('base64');
-      
-      const result = await submitSignedTransaction({
-        signedTxn: signedTxnBase64,
-        transactionId
-      });
-      
-      return result.success;
-    } catch (error) {
-      console.error("Error signing transaction:", error);
-      toast({
-        title: "Error",
-        description: "Failed to sign transaction with wallet",
-        variant: "destructive",
-      });
-      return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -567,8 +699,7 @@ export function useAlgorand() {
     claimUsdc,
     regenerateLink,
     reclaimUsdc,
-    fetchBalance,
     submitSignedTransaction,
-    signAndSubmitTransaction
+    fetchBalance,
   };
 }

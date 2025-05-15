@@ -8,6 +8,7 @@ import {
   reclaimUsdcSchema, 
   signedTransactionSchema,
   atomicTransactionGroupSchema,
+  completeFundingSchema
 } from "@shared/schema";
 import { 
   createEscrowAccount, 
@@ -173,6 +174,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error submitting signed transaction:", error);
       return res.status(500).json({ message: "Failed to submit transaction" });
+    }
+  });
+
+  // New endpoint to complete the USDC opt-in and transfer after app creation
+  app.post("/api/complete-funding", async (req: Request, res: Response) => {
+    try {
+      const result = completeFundingSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false, 
+          message: result.error.message 
+        });
+      }
+      
+      const { appId, appAddress, transactionId, senderAddress } = result.data;
+      
+      console.log(`Preparing opt-in and transfer for app ${appId} at ${appAddress}`);
+      
+      // 1. First, check if app exists (it should by now)
+      try {
+        const appInfo = await algodClient.getApplicationByID(appId).do();
+        console.log("App exists, proceeding with opt-in and transfer");
+      } catch (error) {
+        console.error("App does not exist yet:", error);
+        return res.status(400).json({ 
+          success: false, 
+          message: "App does not exist yet, please try again after app creation is confirmed" 
+        });
+      }
+      
+      // 2. Get the transaction from database to get the amount
+      const transaction = await storage.getTransactionById(transactionId);
+      if (!transaction) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Transaction not found" 
+        });
+      }
+      
+      const amount = parseFloat(transaction.amount);
+      
+      // 3. Prepare the opt-in transaction (app calling itself)
+      const suggestedParams = await algodClient.getTransactionParams().do();
+      
+      // App call to opt in to USDC
+      const optInCallTxn = algosdk.makeApplicationNoOpTxnFromObject({
+        appIndex: appId,
+        suggestedParams: { ...suggestedParams },
+        sender: senderAddress,
+        appArgs: [new Uint8Array(Buffer.from("opt_in_to_asset"))],
+        foreignAssets: [USDC_ASSET_ID]
+      });
+      
+      // Asset transfer for opt-in (from app to app, 0 amount)
+      const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        sender: appAddress,
+        receiver: appAddress,
+        amount: 0,
+        assetIndex: USDC_ASSET_ID,
+        note: new Uint8Array(0),
+        suggestedParams: { ...suggestedParams, flatFee: true, fee: BigInt(1000) }
+      });
+      
+      // Group the opt-in transactions
+      const optInGroup = [optInCallTxn, optInTxn];
+      algosdk.assignGroupID(optInGroup);
+      
+      // 4. Prepare USDC transfer transaction (separate)
+      const microAmount = Math.floor(amount * 1_000_000);
+      const transferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        sender: senderAddress,
+        receiver: appAddress,
+        amount: microAmount,
+        assetIndex: USDC_ASSET_ID,
+        note: new Uint8Array(0),
+        suggestedParams: { ...suggestedParams, flatFee: true, fee: BigInt(1000) }
+      });
+      
+      // Encode the transactions for the client
+      const optInCallTxnBase64 = Buffer.from(algosdk.encodeUnsignedTransaction(optInCallTxn)).toString('base64');
+      const optInTxnBase64 = Buffer.from(algosdk.encodeUnsignedTransaction(optInTxn)).toString('base64');
+      const transferTxnBase64 = Buffer.from(algosdk.encodeUnsignedTransaction(transferTxn)).toString('base64');
+      
+      // Return transactions to the client for signing
+      return res.json({
+        success: true,
+        optInCallTxn: optInCallTxnBase64,
+        optInTxn: optInTxnBase64,
+        transferTxn: transferTxnBase64,
+        message: "Phase 2 transactions prepared successfully"
+      });
+      
+    } catch (error) {
+      console.error("Error preparing phase 2 transactions:", error);
+      return res.status(500).json({ 
+        success: false, 
+        message: error instanceof Error ? error.message : "Unknown error preparing phase 2 transactions"
+      });
     }
   });
 
@@ -395,14 +494,20 @@ return
           roundedAmount
         );
         
-        // Add all funding transactions that need signing by the sender
-        unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO - user signs this
+        // First, we need to create the application 
+        // The user will sign this, and the application will be created on-chain
+        const appCreateTxnEncoded = algosdk.encodeUnsignedTransaction(appCreateTxn);
+        unsignedTxns.push(appCreateTxnEncoded);
         
-        // The opt-in transaction is signed by the application logic signature
-        // So we don't add it to the unsignedTxns array that the user will sign
+        // Adding funding transaction to provide ALGOs to the application
+        unsignedTxns.push(appFundingTxns.appFundingTxn);
         
-        // USDC transfer only happens after opt-in is confirmed
-        unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app - user signs this
+        // For the opt-in and transfer, we'll handle those in a separate transaction group
+        // after the app is created and funded
+        
+        // Store the appId and appAddress in the database for later use
+        transaction.appId = claimApp.appId;
+        transaction.appAddress = claimApp.appAddress;
         
         // Convert transactions to base64 for sending to the frontend
         try {
@@ -412,19 +517,18 @@ return
             console.log(`Encoded unsigned transaction ${i+1}`);
           });
           
-          // Include all transactions in the atomic group
-          // First group: funding and app creation
-          const fundingGroup = [
-            appFundingTxns.appFundingTxn,
-            appFundingTxns.usdcOptInTxn,
+          // For the first phase, we only need to create the app and fund it
+          // Phase 1: Create and fund the app
+          const allTransactions = [
+            appCreateTxnEncoded,  // Create the app
+            appFundingTxns.appFundingTxn  // Fund the app with ALGOs
           ];
           
-          // Second transaction (separate): USDC transfer
-          // This happens after the opt-in is confirmed
-          const allTransactions = [
-            ...fundingGroup,
-            appFundingTxns.usdcTransferTxn
-          ];
+          // Phase 2 will be done after app is created:
+          // - Opt-in to USDC
+          // - Transfer USDC 
+          // This will happen in a second transaction that will be initiated
+          // after confirming that the app was created successfully
           
           // Convert all transactions in the group (including pre-signed ones)
           if (allTransactions) {

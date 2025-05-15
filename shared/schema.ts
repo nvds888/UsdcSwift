@@ -88,6 +88,13 @@ export const signedTransactionSchema = z.object({
   approach: z.string().optional(),
 });
 
+export const completeFundingSchema = z.object({
+  appId: z.number().int().positive(),
+  appAddress: z.string().min(1, "App address is required"),
+  transactionId: z.number().int().positive(),
+  senderAddress: z.string().min(1, "Sender address is required")
+});
+
 export const atomicTransactionGroupSchema = z.object({
   signedTxns: z.array(z.string().min(1, "Each transaction must be a non-empty string")),
   transactionId: z.number().int().positive(),

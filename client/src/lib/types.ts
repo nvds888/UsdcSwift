@@ -57,9 +57,16 @@ export interface TransactionParams {
   claimToken?: string;
 }
 
-export interface TransactionResponse extends Transaction {
-  emailSent: boolean;
+export interface TransactionResponse {
+  success: boolean;
+  transactionId: string;
+  emailSent?: boolean;
   txParams?: TransactionParams;
+  appAddress?: string;
+  appId?: number;
+  claimToken?: string;
+  claimLink?: string;
+  message?: string;
 }
 
 export interface WalletAccount {
