@@ -211,8 +211,8 @@ export async function prepareAppFundingTransactions(
     // 3. Transfer USDC to the app (signed by sender)
     const microAmount = Math.floor(amount * 1_000_000); // Convert to micro USDC
     const usdcTransferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: senderAddr, // from sender
-      to: validatedAppAddress, // to app
+      sender: senderAddr, // from sender
+      receiver: validatedAppAddress, // to app
       amount: microAmount, // amount of USDC
       assetIndex: USDC_ASSET_ID, // USDC asset ID
       note: new Uint8Array(0),
@@ -269,8 +269,8 @@ export async function prepareClaimTransaction(
     
     // Create asset transfer transaction from app to recipient
     const claimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedRecipientAddress, // to recipient
+      sender: validatedAppAddress, // from app
+      receiver: validatedRecipientAddress, // to recipient
       amount: microAmount, // amount
       assetIndex: USDC_ASSET_ID, // USDC asset ID
       note: new Uint8Array(0),
@@ -317,8 +317,8 @@ export async function prepareReclaimTransaction(
     
     // Create asset transfer transaction from app to sender
     const reclaimTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      from: validatedAppAddress, // from app
-      to: validatedSenderAddress, // to sender
+      sender: validatedAppAddress, // from app
+      receiver: validatedSenderAddress, // to sender
       amount: microAmount, // amount
       assetIndex: USDC_ASSET_ID, // USDC asset ID
       note: new Uint8Array(0),
