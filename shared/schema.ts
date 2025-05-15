@@ -88,6 +88,12 @@ export const signedTransactionSchema = z.object({
   approach: z.string().optional(),
 });
 
+export const atomicTransactionGroupSchema = z.object({
+  signedTxns: z.array(z.string().min(1, "Each transaction must be a non-empty string")),
+  transactionId: z.number().int().positive(),
+  approach: z.string().optional(),
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
@@ -97,3 +103,4 @@ export type ClaimUsdcInput = z.infer<typeof claimUsdcSchema>;
 export type RegenerateClaimLinkInput = z.infer<typeof regenerateClaimLinkSchema>;
 export type ReclaimUsdcInput = z.infer<typeof reclaimUsdcSchema>;
 export type SignedTransactionInput = z.infer<typeof signedTransactionSchema>;
+export type AtomicTransactionGroupInput = z.infer<typeof atomicTransactionGroupSchema>;

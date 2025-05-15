@@ -7,6 +7,7 @@ import {
   regenerateClaimLinkSchema, 
   reclaimUsdcSchema, 
   signedTransactionSchema,
+  atomicTransactionGroupSchema,
 } from "@shared/schema";
 import { 
   createEscrowAccount, 
