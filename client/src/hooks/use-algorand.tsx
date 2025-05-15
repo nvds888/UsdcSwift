@@ -430,8 +430,10 @@ export function useAlgorand() {
   const submitSignedTransaction = async (params: SignedTransactionParams): Promise<{ success: boolean; transactionId?: string }> => {
     setIsLoading(true);
     try {
+      console.log("Submitting transaction to API:", params);
       const res = await apiRequest("POST", "/api/submit-transaction", params);
       const data = await res.json();
+      console.log("API Response:", data);
       
       if (data.success) {
         toast({

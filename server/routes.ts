@@ -29,7 +29,9 @@ import {
   prepareClaimTransaction,
   prepareReclaimTransaction,
   submitTransaction,
-  getUsdcBalance
+  getUsdcBalance,
+  algodClient,
+  compileProgram
 } from "./algorand-apps";
 import { prepareAppCallForOptIn } from "./app-lsig";
 import { USDC_ASSET_ID } from "../client/src/lib/constants";
@@ -232,10 +234,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       try {
-        // Generate transactions for funding the app
+        // Generate transactions for creating and funding the app
         const unsignedTxns: Uint8Array[] = [];
         const txnsBase64: string[] = [];
         const allTxnsBase64: string[] = [];
+        
+        // Create the application creation transaction
+        const onCompletionValue = algosdk.OnApplicationComplete.NoOpOC;
+        const localInts = 0;
+        const localBytes = 0;
+        const globalInts = 1; // For storing amount
+        const globalBytes = 2; // For storing sender and recipient
+        const suggestedParams = await algodClient.getTransactionParams().do();
+        
+        // Compile the TEAL program again - needed for creating app transaction
+        const approvalProgramTemplate = `#pragma version 6
+// Check if this is an asset transfer (claim or reclaim)
+txn TypeEnum
+int 4 // AssetTransfer
+==
+bz reject
+
+// Check if this is for USDC asset
+txn XferAsset
+int ${USDC_ASSET_ID} // USDC Asset ID
+==
+bz reject
+
+// Check if sender is either original sender (reclaim) or recipient (claim)
+txn Sender
+addr ${senderAddress} // Original sender
+==
+bnz approve // If sender is original sender, approve (reclaim)
+
+// Otherwise, check if sender is the recipient (claim)
+txn Sender
+addr ${senderAddress} // Initial recipient (same as sender for now)
+==
+bz reject // If not recipient, reject
+
+approve:
+int 1
+return
+
+reject:
+int 0
+return
+`;
+        
+        // Compile the approval program
+        const compiledApprovalProgram = await compileProgram(approvalProgramTemplate);
+        
+        // Use a simple clear program that always succeeds
+        const clearProgramSource = "#pragma version 6\nint 1\nreturn";
+        const compiledClearProgram = await compileProgram(clearProgramSource);
+        
+        // Create the application creation transaction for the user to sign
+        const appCreateTxn = algosdk.makeApplicationCreateTxnFromObject({
+          sender: senderAddress,
+          approvalProgram: compiledApprovalProgram,
+          clearProgram: compiledClearProgram,
+          numLocalInts: localInts,
+          numLocalByteSlices: localBytes,
+          numGlobalInts: globalInts,
+          numGlobalByteSlices: globalBytes,
+          suggestedParams,
+          onComplete: onCompletionValue
+        });
+        
+        // Add the app creation transaction as the first transaction to sign
+        unsignedTxns.push(algosdk.encodeUnsignedTransaction(appCreateTxn));
         
         // Prepare the app funding transactions
         const appFundingTxns = await prepareAppFundingTransactions(
@@ -245,10 +313,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           roundedAmount
         );
         
-        // No need to sign the opt-in transaction as it's an app call
-        // The sender will sign all transactions in the atomic group
-        
-        // Add all transactions that need signing by the sender
+        // Add all funding transactions that need signing by the sender
         unsignedTxns.push(appFundingTxns.appFundingTxn);  // Fund app with ALGO
         unsignedTxns.push(appFundingTxns.usdcOptInTxn);   // App call to opt in to USDC
         unsignedTxns.push(appFundingTxns.usdcTransferTxn); // Transfer USDC to app
