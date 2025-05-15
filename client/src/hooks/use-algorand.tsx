@@ -72,96 +72,55 @@ export function useAlgorand() {
     }
   };
   
-  // Sign and submit transactions sequentially (non-atomic)
+  // Sign and submit transactions as an atomic group
   const signAndSubmitAtomicGroup = async (
     txnsToSign: string[],
     allTxns: string[],
     transactionId: number
   ): Promise<boolean> => {
     try {
-      console.log(`Processing sequential transactions: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
+      console.log(`Processing atomic transaction group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // 1. Handle the funding transaction (first transaction)
-      console.log("Processing funding transaction (first transaction)");
-      const fundingTxnBinary = new Uint8Array(Buffer.from(allTxns[0], 'base64'));
+      // Convert all transactions to binary format
+      const txnsToSignBinary = txnsToSign.map(txn => 
+        new Uint8Array(Buffer.from(txn, 'base64'))
+      );
       
-      // Sign funding transaction with wallet
-      const signedFundingTxns = await signTransactions([fundingTxnBinary]);
+      console.log(`Requesting wallet to sign ${txnsToSignBinary.length} transactions`);
       
-      if (!signedFundingTxns || !signedFundingTxns[0]) {
-        console.error("Failed to sign funding transaction");
+      // Sign all transactions at once with the wallet
+      const signedTxns = await signTransactions(txnsToSignBinary);
+      
+      if (!signedTxns || signedTxns.length === 0) {
+        console.error("Failed to sign transactions");
         return false;
       }
       
-      // Submit the funding transaction
-      const fundingResponse = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(signedFundingTxns[0]).toString('base64'),
-        transactionId,
-        isSequential: true,
-        sequentialIndex: 0
-      });
+      console.log(`Successfully signed ${signedTxns.length} transactions`);
       
-      if (!fundingResponse.ok) {
-        console.error("Failed to submit funding transaction");
-        return false;
-      }
-      
-      console.log("Funding transaction submitted successfully");
-      
-      // 2. The opt-in transaction is pre-signed (second transaction)
-      console.log("Processing pre-signed opt-in transaction (second transaction)");
-      const optInTxnBinary = new Uint8Array(Buffer.from(allTxns[1], 'base64'));
-      
-      // Submit the pre-signed opt-in transaction
-      const optInResponse = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(optInTxnBinary).toString('base64'),
-        transactionId,
-        isSequential: true,
-        sequentialIndex: 1
-      });
-      
-      if (!optInResponse.ok) {
-        console.error("Failed to submit opt-in transaction");
-        return false;
-      }
-      
-      console.log("Opt-in transaction submitted successfully");
-      
-      // 3. Handle the USDC transfer transaction (third transaction)
-      console.log("Processing USDC transfer transaction (third transaction)");
-      const transferTxnBinary = new Uint8Array(Buffer.from(allTxns[2], 'base64'));
-      
-      // Sign transfer transaction with wallet
-      const signedTransferTxns = await signTransactions([transferTxnBinary]);
-      
-      if (!signedTransferTxns || !signedTransferTxns[0]) {
-        console.error("Failed to sign transfer transaction");
-        return false;
-      }
-      
-      // Submit the transfer transaction
-      const transferResponse = await apiRequest("POST", "/api/submit-transaction", {
-        signedTxn: Buffer.from(signedTransferTxns[0]).toString('base64'),
-        transactionId,
-        isSequential: true,
-        sequentialIndex: 2
-      });
-      
-      if (!transferResponse.ok) {
-        console.error("Failed to submit transfer transaction");
-        return false;
-      }
-      
-      console.log("Transfer transaction submitted successfully");
-      
-      // Extract status from response - this is the final transaction that should update the status
-      const transferResponseData = await transferResponse.json();
-      if (transferResponseData.status === 'funded') {
-        console.log("All transactions completed successfully, escrow is funded with USDC");
+      // Now submit each signed transaction
+      for (let i = 0; i < signedTxns.length; i++) {
+        console.log(`Submitting transaction ${i+1} of ${signedTxns.length}`);
         
-        // Invalidate transaction queries to force a refresh
-        queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+        const submitResponse = await apiRequest("POST", "/api/submit-transaction", {
+          signedTxn: Buffer.from(signedTxns[i]).toString('base64'),
+          transactionId,
+          isSequential: true,
+          sequentialIndex: i
+        });
+        
+        if (!submitResponse.ok) {
+          console.error(`Failed to submit transaction ${i+1}`);
+          return false;
+        }
+        
+        console.log(`Transaction ${i+1} submitted successfully`);
       }
+      
+      console.log("All transactions in atomic group submitted successfully");
+      
+      // Invalidate transaction queries to force a refresh
+      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       
       return true;
     } catch (error) {

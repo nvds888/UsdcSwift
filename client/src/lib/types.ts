@@ -4,7 +4,9 @@ export interface Transaction {
   recipientEmail: string;
   amount: string;
   note?: string;
-  smartContractAddress: string;
+  smartContractAddress?: string;
+  appAddress?: string;
+  appId?: number;
   claimToken: string;
   claimed: boolean;
   createdAt: string;
@@ -47,7 +49,9 @@ export interface TransactionParams {
   txnsBase64?: string[];    // Array of transactions to be signed
   allTxnsBase64?: string[]; // Full atomic transaction group including pre-signed transactions
   senderAddress?: string;
-  escrowAddress: string;
+  escrowAddress?: string;
+  appAddress?: string;
+  appId?: number;
   recipientAddress?: string;
   amount: number;
   claimToken?: string;

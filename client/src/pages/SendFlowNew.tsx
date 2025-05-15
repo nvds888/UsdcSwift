@@ -459,12 +459,12 @@ const SendFlowNew: React.FC = () => {
                     <div className="flex justify-between">
                       <span className="text-gray-600">Smart Contract:</span>
                       <a
-                        href={`https://testnet.algoexplorer.io/address/${transaction.smartContractAddress}`}
+                        href={`https://testnet.algoexplorer.io/address/${transaction.appAddress || ''}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-600 hover:text-blue-800 flex items-center"
                       >
-                        {transaction.smartContractAddress.slice(0, 6)}...{transaction.smartContractAddress.slice(-4)}
+                        {transaction.appAddress ? `${transaction.appAddress.slice(0, 6)}...${transaction.appAddress.slice(-4)}` : 'Pending...'}
                         <ExternalLink className="h-3 w-3 ml-1" />
                       </a>
                     </div>
