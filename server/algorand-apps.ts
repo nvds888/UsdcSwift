@@ -97,19 +97,45 @@ export async function createClaimApp(
     // Simple approval program that allows only the sender to reclaim funds
     // and only the designated recipient to claim funds
     const approvalProgramTemplate = `#pragma version 6
-// Check if this is an asset transfer (claim or reclaim)
+// Handle different transaction types
 txn TypeEnum
 int 4 // AssetTransfer
 ==
-bz reject
+bnz handle_asset_transfer
 
+txn TypeEnum
+int 6 // ApplicationCall
+==
+bnz handle_app_call
+
+// Reject other transaction types
+b reject
+
+// Handle application calls (including opt-in)
+handle_app_call:
+// Check if this is the opt-in call
+txna ApplicationArgs 0
+byte "opt_in_to_asset"
+==
+bnz approve_opt_in
+
+// Reject other app calls
+b reject
+
+approve_opt_in:
+// The app call is for opt-in, so approve it
+int 1
+return
+
+// Handle asset transfers (for claims and reclaims)
+handle_asset_transfer:
 // Check if this is for USDC asset
 txn XferAsset
 int ${USDC_ASSET_ID} // USDC Asset ID
 ==
 bz reject
 
-// Check if sender is either original sender (reclaim) or recipient (claim)
+// Check if sender is either original sender (reclaim)
 txn Sender
 addr ${senderAddr} // Original sender
 ==
@@ -235,15 +261,14 @@ export async function prepareAppFundingTransactions(
     // Let's give the funding transaction time to be confirmed before executing other transactions
     // by not putting them in the same group
     
-    // CRITICAL CHANGE: The opt-in should be sent FROM the app address, not the sender
-    // This was the root cause of the error
-    const usdcOptInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: validatedAppAddress, // FROM APP - this is what was wrong before
-      receiver: validatedAppAddress, // TO APP (same address for opt-in)
-      amount: 0, // 0 for opt-in
-      assetIndex: USDC_ASSET_ID, // USDC asset ID
-      note: new Uint8Array(0),
-      suggestedParams
+    // Create app call transaction to opt in to USDC
+    // We need to call the app first to authorize the opt-in
+    const usdcOptInTxn = algosdk.makeApplicationNoOpTxnFromObject({
+      appIndex: appId,
+      suggestedParams,
+      sender: senderAddr,
+      appArgs: [new Uint8Array(Buffer.from("opt_in_to_asset"))],
+      foreignAssets: [USDC_ASSET_ID]
     });
     
     // 3. Transfer USDC to the app (after opt-in succeeded)

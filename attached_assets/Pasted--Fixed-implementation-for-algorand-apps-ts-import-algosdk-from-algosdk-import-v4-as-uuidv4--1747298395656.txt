@@ -1,0 +1,410 @@
+// Fixed implementation for algorand-apps.ts
+import algosdk from 'algosdk';
+import { v4 as uuidv4 } from 'uuid';
+import { USDC_ASSET_ID } from '../client/src/lib/constants';
+
+// ... (keep existing imports and helper functions)
+
+/**
+ * Creates an application to handle claim-by-email functionality
+ * This application will hold USDC and allow it to be claimed by a specific recipient
+ */
+export async function createClaimApp(
+  sender: string,
+  recipientAddress: string | null = null
+): Promise<{
+  appId: number;
+  appAddress: string;
+  claimToken: string;
+}> {
+  try {
+    console.log(`Creating claim app for sender: ${sender}`);
+    
+    const senderAddr = ensureAddressString(sender);
+    const claimToken = uuidv4();
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    
+    // CRITICAL FIX: Create a smart contract that can handle opt-ins and transfers
+    const approvalProgramTemplate = `#pragma version 9
+txn ApplicationID
+bz create_app
+
+// Handle different app calls
+txn OnCompletion
+int NoOp
+==
+bnz handle_call
+
+// Handle other app operations
+int 0
+return
+
+create_app:
+int 1
+return
+
+handle_call:
+// Get the first argument
+txna ApplicationArgs 0
+byte "opt_in"
+==
+bnz handle_opt_in
+
+txna ApplicationArgs 0
+byte "claim"
+==
+bnz handle_claim
+
+txna ApplicationArgs 0
+byte "reclaim"
+==
+bnz handle_reclaim
+
+// Unknown operation
+int 0
+return
+
+handle_opt_in:
+// Verify transaction group structure
+global GroupSize
+int 2
+==
+assert
+
+// Check that first transaction is the app call (this one)
+gtxn 0 TypeEnum
+int appl
+==
+assert
+
+// Check that second transaction is an opt-in from the app
+gtxn 1 TypeEnum
+int axfer
+==
+assert
+
+gtxn 1 Sender
+global CurrentApplicationAddress
+==
+assert
+
+gtxn 1 AssetReceiver
+global CurrentApplicationAddress
+==
+assert
+
+gtxn 1 AssetAmount
+int 0
+==
+assert
+
+gtxn 1 XferAsset
+int ${USDC_ASSET_ID}
+==
+assert
+
+// Approve the opt-in
+int 1
+return
+
+handle_claim:
+// Verify the sender is the designated recipient
+txn Sender
+app_global_get_ex 0 "recipient"
+assert // key exists
+==
+assert
+
+// Verify transaction structure for claim
+global GroupSize
+int 2
+==
+assert
+
+// First transaction should be this app call
+gtxn 0 TypeEnum
+int appl
+==
+assert
+
+// Second transaction should be the transfer
+gtxn 1 TypeEnum
+int axfer
+==
+assert
+
+gtxn 1 Sender
+global CurrentApplicationAddress
+==
+assert
+
+gtxn 1 AssetReceiver
+txn Sender
+==
+assert
+
+gtxn 1 XferAsset
+int ${USDC_ASSET_ID}
+==
+assert
+
+// Approve the claim
+int 1
+return
+
+handle_reclaim:
+// Verify the sender is the original creator
+txn Sender
+global CreatorAddress
+==
+assert
+
+// Verify transaction structure for reclaim
+global GroupSize
+int 2
+==
+assert
+
+// First transaction should be this app call
+gtxn 0 TypeEnum
+int appl
+==
+assert
+
+// Second transaction should be the transfer
+gtxn 1 TypeEnum
+int axfer
+==
+assert
+
+gtxn 1 Sender
+global CurrentApplicationAddress
+==
+assert
+
+gtxn 1 AssetReceiver
+global CreatorAddress
+==
+assert
+
+gtxn 1 XferAsset
+int ${USDC_ASSET_ID}
+==
+assert
+
+// Approve the reclaim
+int 1
+return
+`;
+
+    // Compile the approval program
+    const compiledApprovalProgram = await compileProgram(approvalProgramTemplate);
+    
+    // Clear program that always succeeds
+    const clearProgramSource = "#pragma version 9\nint 1\nreturn";
+    const compiledClearProgram = await compileProgram(clearProgramSource);
+    
+    // Create application
+    const appCreateTxn = algosdk.makeApplicationCreateTxnFromObject({
+      sender: senderAddr,
+      approvalProgram: compiledApprovalProgram,
+      clearProgram: compiledClearProgram,
+      numLocalInts: 0,
+      numLocalByteSlices: 0,
+      numGlobalInts: 1,
+      numGlobalByteSlices: 1, // To store recipient address
+      suggestedParams,
+      onComplete: algosdk.OnApplicationComplete.NoOpOC,
+      appArgs: [
+        new Uint8Array(Buffer.from("create")),
+      ],
+      accounts: recipientAddress ? [recipientAddress] : undefined,
+    });
+    
+    // Submit and wait for confirmation
+    const signedTxn = await signTransaction(appCreateTxn, sender); // You'll need to implement this
+    const { txId } = await algodClient.sendRawTransaction(signedTxn).do();
+    await algosdk.waitForConfirmation(algodClient, txId, 4);
+    
+    // Get the app ID from the transaction
+    const txnResult = await algodClient.pendingTransactionInformation(txId).do();
+    const appId = txnResult['application-index'];
+    const appAddress = algosdk.getApplicationAddress(appId);
+    
+    console.log(`Created app with ID: ${appId} and address: ${appAddress}`);
+    
+    return {
+      appId,
+      appAddress: ensureAddressString(appAddress),
+      claimToken
+    };
+  } catch (error) {
+    console.error("Error creating claim app:", error);
+    throw error;
+  }
+}
+
+/**
+ * Prepares transactions to fund and set up a claim app
+ */
+export async function prepareAppFundingTransactions(
+  sender: string,
+  appId: number,
+  appAddress: string,
+  amount: number
+): Promise<{
+  fundingTxn: algosdk.Transaction;
+  optInCallTxn: algosdk.Transaction;
+  optInTxn: algosdk.Transaction;
+  transferTxn: algosdk.Transaction;
+}> {
+  try {
+    console.log(`Preparing funding transactions for app ${appId} at address ${appAddress}`);
+    
+    const senderAddr = ensureAddressString(sender);
+    const validatedAppAddress = ensureAddressString(appAddress);
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    
+    // 1. Fund the app with ALGO for minimum balance
+    const fundingTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: senderAddr,
+      receiver: validatedAppAddress,
+      amount: 200000, // 0.2 ALGO
+      note: new Uint8Array(0),
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    // 2. App call to authorize opt-in
+    const optInCallTxn = algosdk.makeApplicationNoOpTxnFromObject({
+      sender: senderAddr,
+      appIndex: appId,
+      appArgs: [new Uint8Array(Buffer.from("opt_in"))],
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    // 3. Opt-in transaction (will be signed by the app via smart contract logic)
+    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedAppAddress,
+      receiver: validatedAppAddress,
+      amount: 0,
+      assetIndex: USDC_ASSET_ID,
+      note: new Uint8Array(0),
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    // 4. Transfer USDC to the app (separate transaction, not grouped)
+    const microAmount = Math.floor(amount * 1_000_000);
+    const transferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: senderAddr,
+      receiver: validatedAppAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      note: new Uint8Array(0),
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    return {
+      fundingTxn,
+      optInCallTxn,
+      optInTxn,
+      transferTxn
+    };
+  } catch (error) {
+    console.error("Error preparing app funding transactions:", error);
+    throw error;
+  }
+}
+
+/**
+ * Prepares a claim transaction
+ */
+export async function prepareClaimTransaction(
+  appId: number,
+  appAddress: string,
+  recipientAddress: string,
+  amount: number
+): Promise<{
+  claimCallTxn: algosdk.Transaction;
+  transferTxn: algosdk.Transaction;
+}> {
+  try {
+    const validatedAppAddress = ensureAddressString(appAddress);
+    const validatedRecipientAddress = ensureAddressString(recipientAddress);
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    const microAmount = Math.floor(amount * 1_000_000);
+    
+    // 1. App call to authorize claim
+    const claimCallTxn = algosdk.makeApplicationNoOpTxnFromObject({
+      sender: validatedRecipientAddress,
+      appIndex: appId,
+      appArgs: [new Uint8Array(Buffer.from("claim"))],
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    // 2. Transfer transaction (will be executed by the app)
+    const transferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedAppAddress,
+      receiver: validatedRecipientAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      note: new Uint8Array(0),
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    return {
+      claimCallTxn,
+      transferTxn
+    };
+  } catch (error) {
+    console.error("Error preparing claim transaction:", error);
+    throw error;
+  }
+}
+
+/**
+ * Prepares a reclaim transaction
+ */
+export async function prepareReclaimTransaction(
+  appId: number,
+  appAddress: string,
+  senderAddress: string,
+  amount: number
+): Promise<{
+  reclaimCallTxn: algosdk.Transaction;
+  transferTxn: algosdk.Transaction;
+}> {
+  try {
+    const validatedAppAddress = ensureAddressString(appAddress);
+    const validatedSenderAddress = ensureAddressString(senderAddress);
+    const suggestedParams = await algodClient.getTransactionParams().do();
+    const microAmount = Math.floor(amount * 1_000_000);
+    
+    // 1. App call to authorize reclaim
+    const reclaimCallTxn = algosdk.makeApplicationNoOpTxnFromObject({
+      sender: validatedSenderAddress,
+      appIndex: appId,
+      appArgs: [new Uint8Array(Buffer.from("reclaim"))],
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    // 2. Transfer transaction (will be executed by the app)
+    const transferTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: validatedAppAddress,
+      receiver: validatedSenderAddress,
+      amount: microAmount,
+      assetIndex: USDC_ASSET_ID,
+      note: new Uint8Array(0),
+      suggestedParams: { ...suggestedParams }
+    });
+    
+    return {
+      reclaimCallTxn,
+      transferTxn
+    };
+  } catch (error) {
+    console.error("Error preparing reclaim transaction:", error);
+    throw error;
+  }
+}
+
+// ... (keep remaining functions)
