@@ -79,31 +79,57 @@ export function useAlgorand() {
     transactionId: number
   ): Promise<boolean> => {
     try {
-      console.log(`Processing atomic transaction group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
+      console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // Convert all transactions to binary format
-      const txnsToSignBinary = txnsToSign.map(txn => 
+      // Convert all transactions to Uint8Array format
+      const allTxnBinaries: Uint8Array[] = allTxns.map(txn => 
         new Uint8Array(Buffer.from(txn, 'base64'))
       );
       
-      console.log(`Requesting wallet to sign ${txnsToSignBinary.length} transactions`);
+      // Find which indexes need signing
+      const indexesToSign: number[] = [];
       
-      // Sign all transactions at once with the wallet
-      const signedTxns = await signTransactions(txnsToSignBinary);
+      for (let i = 0; i < allTxns.length; i++) {
+        // Check if this transaction is in the list of transactions to sign
+        if (txnsToSign.includes(allTxns[i])) {
+          indexesToSign.push(i);
+          console.log(`Transaction ${i} needs signing`);
+        } else {
+          console.log(`Transaction ${i} is pre-signed or doesn't need signing`);
+        }
+      }
       
-      if (!signedTxns || signedTxns.length === 0) {
-        console.error("Failed to sign transactions");
+      console.log(`Indexes to sign: ${indexesToSign.join(', ')}`);
+      
+      // Pass ALL transactions to the wallet, but specify which ones to sign
+      // The wallet will validate the group and only sign the specified indexes
+      const signedTxns = await signTransactions(allTxnBinaries, indexesToSign);
+      
+      if (!signedTxns || signedTxns.length !== allTxns.length) {
+        console.error("Failed to sign transactions properly");
         return false;
       }
       
-      console.log(`Successfully signed ${signedTxns.length} transactions`);
+      // The wallet returns the full array with signed transactions at the specified indexes
+      // and null/original values at the pre-signed indexes
+      const finalTxns: Uint8Array[] = [];
       
-      // Now submit each signed transaction
       for (let i = 0; i < signedTxns.length; i++) {
-        console.log(`Submitting transaction ${i+1} of ${signedTxns.length}`);
+        if (signedTxns[i]) {
+          // This was signed by the wallet
+          finalTxns.push(signedTxns[i]);
+        } else {
+          // This was pre-signed or not meant to be signed - use original
+          finalTxns.push(allTxnBinaries[i]);
+        }
+      }
+
+      // Now submit each signed transaction sequentially
+      for (let i = 0; i < finalTxns.length; i++) {
+        console.log(`Submitting transaction ${i+1} of ${finalTxns.length}`);
         
         const submitResponse = await apiRequest("POST", "/api/submit-transaction", {
-          signedTxn: Buffer.from(signedTxns[i]).toString('base64'),
+          signedTxn: Buffer.from(finalTxns[i]).toString('base64'),
           transactionId,
           isSequential: true,
           sequentialIndex: i
@@ -124,15 +150,23 @@ export function useAlgorand() {
       
       return true;
     } catch (error) {
-      console.error("Error in sequential transaction processing:", error);
+      console.error("Error in atomic transaction group signing:", error);
       
       // Handle specific wallet errors
       if (error instanceof Error) {
-        toast({
-          title: "Transaction Error",
-          description: error.message,
-          variant: "destructive",
-        });
+        if (error.message.includes("transaction group has failed validation")) {
+          toast({
+            title: "Transaction Group Error",
+            description: "The transactions could not be validated as a group. Please try again.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Transaction Error",
+            description: error.message,
+            variant: "destructive",
+          });
+        }
       }
       
       return false;
