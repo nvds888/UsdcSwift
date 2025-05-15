@@ -220,12 +220,18 @@ export async function prepareAppFundingTransactions(
       suggestedParams
     });
     
-    console.log("Funding transactions prepared successfully");
+    // Create a transaction array for the atomic group
+    const txns = [appFundingTxn, usdcOptInTxn, usdcTransferTxn];
+    
+    // Assign group ID to make this an atomic transaction group
+    const txGroup = algosdk.assignGroupID(txns);
+    
+    console.log("Atomic transaction group prepared successfully");
     
     return {
-      appFundingTxn: algosdk.encodeUnsignedTransaction(appFundingTxn),
-      usdcOptInTxn: algosdk.encodeUnsignedTransaction(usdcOptInTxn),
-      usdcTransferTxn: algosdk.encodeUnsignedTransaction(usdcTransferTxn)
+      appFundingTxn: algosdk.encodeUnsignedTransaction(txGroup[0]),
+      usdcOptInTxn: algosdk.encodeUnsignedTransaction(txGroup[1]),
+      usdcTransferTxn: algosdk.encodeUnsignedTransaction(txGroup[2])
     };
   } catch (error) {
     const errorMsg = toErrorWithMessage(error);
