@@ -144,9 +144,9 @@ return
     const globalInts = 1; // For storing amount
     const globalBytes = 2; // For storing sender and recipient
     
-    // Create the application
+    // Create the application - for algosdk v3.2.0
     const appCreateTxn = algosdk.makeApplicationCreateTxnFromObject({
-      from: senderAddr,
+      sender: senderAddr,
       approvalProgram: compiledApprovalProgram,
       clearProgram: compiledClearProgram,
       numLocalInts: localInts,
@@ -160,15 +160,18 @@ return
     // Sign the transaction
     const signedTxn = algosdk.signTransaction(appCreateTxn, algosdk.decodeAddress(senderAddr).publicKey);
     
-    // Submit the transaction
-    const { txId } = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    // Submit the transaction - adjusted for algosdk v3.2.0
+    const txResponse = await algodClient.sendRawTransaction(signedTxn.blob).do();
+    // Extract txId - format changed in algosdk v3.2.0
+    const txId = txResponse.txId || Object.values(txResponse)[0];
     
     // Wait for confirmation
     await algosdk.waitForConfirmation(algodClient, txId, 4);
     
     // Get app info from transaction result
     const confirmedTxn = await algodClient.pendingTransactionInformation(txId).do();
-    const appId = confirmedTxn['application-index'];
+    // Access appId - property name changed in algosdk v3.2.0
+    const appId = confirmedTxn.applicationIndex || confirmedTxn['application-index'];
     
     if (!appId) {
       throw new Error('Failed to get application ID from transaction result');
@@ -373,9 +376,14 @@ export async function prepareReclaimTransaction(
  */
 export async function submitTransaction(signedTxn: Uint8Array): Promise<string> {
   try {
-    // Submit the transaction
+    console.log("Submitting transaction to Algorand network...");
+    // Submit the transaction - adjusted for algosdk v3.2.0
     const response = await algodClient.sendRawTransaction(signedTxn).do();
-    const txid = response.txid;
+    
+    // Extract txId - format changed in algosdk v3.2.0
+    const txid = response.txId || response.txid || Object.values(response)[0];
+    
+    console.log(`Transaction submitted with ID: ${txid}`);
     
     // Wait for confirmation
     await algosdk.waitForConfirmation(algodClient, txid, 5);

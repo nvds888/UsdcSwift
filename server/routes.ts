@@ -148,10 +148,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let txId;
       if (approach === 'app') {
         // Use the app-based approach
-        txId = await submitTransaction(signedTxn);
+        txId = await submitTransaction(signedTxnBuffer);
       } else {
         // Use the escrow-based approach (default)
-        txId = await submitSignedTransaction(signedTxn, "");
+        txId = await submitSignedTransaction(signedTxnBuffer);
       }
       
       if (isSequential && sequentialIndex === 2) { // 2 represents the final USDC transfer transaction
