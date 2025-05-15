@@ -73,6 +73,7 @@ export function useAlgorand() {
   };
   
   // Sign and submit transactions as an atomic group
+  // MODIFIED: Handle Algorand SDK validation issues with app creation
   const signAndSubmitAtomicGroup = async (
     txnsToSign: string[],
     allTxns: string[],
@@ -81,55 +82,77 @@ export function useAlgorand() {
     try {
       console.log(`Processing atomic group: ${allTxns.length} total txns, ${txnsToSign.length} to sign`);
       
-      // Convert all transactions to Uint8Array format
-      const allTxnBinaries: Uint8Array[] = allTxns.map(txn => 
+      // For app creation, we'll process transactions individually rather than as a group
+      // to avoid Algorand SDK validation errors with app creation transactions
+      
+      // Convert transactions that need signing to Uint8Array format
+      const txnsToSignBinary: Uint8Array[] = txnsToSign.map(txn => 
         new Uint8Array(Buffer.from(txn, 'base64'))
       );
       
-      // Find which indexes need signing
-      const indexesToSign: number[] = [];
+      // Sign the transactions that need signing
+      console.log(`Signing ${txnsToSignBinary.length} transactions directly`);
+      const signedTxns = await signTransactions(txnsToSignBinary);
       
-      for (let i = 0; i < allTxns.length; i++) {
-        // Check if this transaction is in the list of transactions to sign
-        if (txnsToSign.includes(allTxns[i])) {
-          indexesToSign.push(i);
-          console.log(`Transaction ${i} needs signing`);
-        } else {
-          console.log(`Transaction ${i} is pre-signed or doesn't need signing`);
-        }
-      }
-      
-      // Sign all transactions in a single wallet request
-      const signedTxns = await signTransactions(allTxnBinaries, indexesToSign);
-      
-      if (!signedTxns) {
-        // User cancelled or wallet error
-        console.error("Failed to sign transactions - user cancelled or wallet error");
+      if (!signedTxns || signedTxns.length !== txnsToSignBinary.length) {
+        console.error("Failed to sign transactions or user cancelled");
+        toast({
+          title: "Transaction Cancelled",
+          description: "Transaction signing was cancelled",
+          variant: "destructive",
+        });
         return false;
       }
       
-      // Prepare the final transaction array, replacing the original transactions
-      // with the signed ones at the correct indexes
-      const finalTxns: Uint8Array[] = [...allTxnBinaries];
-      indexesToSign.forEach((idx, i) => {
-        if (signedTxns[i]) finalTxns[idx] = signedTxns[i] as Uint8Array;
-      });
+      // First try sending the app creation transaction individually
+      console.log("Submitting app creation transaction individually");
       
-      // Convert to base64 for API submission
-      const finalTxnsBase64 = finalTxns.map(txn => Buffer.from(txn).toString('base64'));
+      // Type safety check to ensure we have a Uint8Array
+      if (!signedTxns[0]) {
+        console.error("First transaction wasn't signed properly");
+        return false;
+      }
       
-      // Submit the entire transaction group to the server
-      const response = await apiRequest("POST", "/api/submit-atomic-group", {
-        signedTxns: finalTxnsBase64,
+      const appCreateTxnBase64 = Buffer.from(signedTxns[0] as Uint8Array).toString('base64');
+      const createResponse = await apiRequest("POST", "/api/submit-transaction", {
+        signedTxn: appCreateTxnBase64,
         transactionId: transactionId
       });
       
-      if (!response.ok) {
-        console.error("Failed to submit atomic transaction group");
+      if (!createResponse.ok) {
+        console.error("Failed to submit app creation transaction");
+        toast({
+          title: "App Creation Failed",
+          description: "Failed to create the application on Algorand",
+          variant: "destructive",
+        });
         return false;
       }
       
-      console.log("Atomic transaction group submitted successfully");
+      // Wait a moment for app creation to be confirmed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Submit funding transaction
+      if (signedTxns.length > 1 && signedTxns[1]) {
+        console.log("Submitting app funding transaction");
+        const fundingTxnBase64 = Buffer.from(signedTxns[1] as Uint8Array).toString('base64');
+        const fundingResponse = await apiRequest("POST", "/api/submit-transaction", {
+          signedTxn: fundingTxnBase64,
+          transactionId: transactionId
+        });
+        
+        if (!fundingResponse.ok) {
+          console.error("Failed to submit app funding transaction");
+          toast({
+            title: "Transaction Warning",
+            description: "App was created but funding failed. You may need to manually fund the app.",
+            variant: "destructive",
+          });
+          // Continue anyway since the app was created
+        }
+      }
+      
+      console.log("Phase 1 transactions completed successfully");
       
       // Refresh transactions
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
@@ -142,10 +165,13 @@ export function useAlgorand() {
       if (error instanceof Error) {
         if (error.message.includes("transaction group has failed validation")) {
           toast({
-            title: "Transaction Group Error",
-            description: "The transactions could not be validated as a group. Please try again.",
+            title: "Trying Alternative Approach",
+            description: "Transaction grouping failed. Attempting transactions individually...",
             variant: "destructive",
           });
+          
+          // Fallback to individual transaction submission method
+          return await signAndSubmitIndividualTransactions(txnsToSign, transactionId);
         } else {
           toast({
             title: "Transaction Error",
